@@ -9,11 +9,13 @@ import { builtInChecks } from "../../checks/index.js";
 import type { DeploymentProfile } from "../../domain/deploymentProfile.js";
 import { TwinError } from "../../domain/errors.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
+import { scanForRemoteResources, scanForThirdPartyKeys } from "../../domain/safetyScan.js";
 import { computeVerdict } from "../../domain/verdict.js";
 import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
 import { HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
 import { HttpProxy } from "../../infra/proxy/httpProxy.js";
+import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
 import { FsWorkspaceManager } from "../../infra/workspace/fsWorkspaceManager.js";
 import type { Logger } from "../../ports/logger.js";
 import { computeExitCode } from "../../report/exitCode.js";
@@ -30,6 +32,8 @@ export interface RunOptions {
   bootTimeoutMs: number;
   env: Record<string, string>;
   keepWorkspaces: boolean;
+  /** Bypasses the non-local-database refusal (§9.1, I8). Off by default - this is the single most important safety rule. */
+  allowRemote: boolean;
 }
 
 const PROFILE: DeploymentProfile = "ephemeral";
@@ -67,6 +71,32 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       });
     }
     const scenario = parsed.scenario;
+
+    // Safety preflight (§9.1/§9.2, I8): scan every env source that would end
+    // up inherited by a spawned instance - .env* files, Twin's own process
+    // env (instances inherit it), and --env overrides.
+    const dotEnvVars = await loadDotEnvFiles(options.projectDir);
+    const mergedEnv = { ...dotEnvVars, ...process.env, ...options.env } as Record<string, string>;
+
+    const remoteRefs = scanForRemoteResources(mergedEnv);
+    if (remoteRefs.length > 0 && !options.allowRemote) {
+      const list = remoteRefs.map((r) => `  ${r.key} -> ${r.host}`).join("\n");
+      throw new TwinError(
+        "E_UNSAFE_ENV",
+        `found what looks like a non-local database/service in the environment:\n${list}`,
+        {
+          hint: "Twin would write test users/records into this real database. If that's genuinely fine, pass --allow-remote.",
+          details: { remoteRefs }
+        }
+      );
+    }
+
+    const thirdPartyKeys = scanForThirdPartyKeys(mergedEnv);
+    if (thirdPartyKeys.length > 0) {
+      logger.warn("third-party service keys are present - the scenario may trigger real calls (Stripe/email/SMS/LLM)", {
+        keys: thirdPartyKeys
+      });
+    }
 
     const run = await store.createRun();
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));

@@ -19,7 +19,8 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   healthPath: "/health",
   portEnv: "PORT",
   bootTimeoutMs: 15_000,
-  keepWorkspaces: false
+  keepWorkspaces: false,
+  allowRemote: false
 };
 
 /**

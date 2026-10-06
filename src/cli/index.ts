@@ -50,6 +50,11 @@ program
   .option("--boot-timeout-ms <ms>", "boot timeout per instance", (v: string) => Number(v), 60_000)
   .option("--env <KEY=VALUE>", "extra env var for every instance (repeatable)", parseEnvFlag, {})
   .option("--keep-workspaces", "don't delete the per-instance tmp workspaces on exit", false)
+  .option(
+    "--allow-remote",
+    "allow running even if a .env/process env var looks like a non-local database or service (I8) - off by default on purpose",
+    false
+  )
   .action(async (opts: {
     scenario: string;
     project: string;
@@ -59,6 +64,7 @@ program
     bootTimeoutMs: number;
     env: Record<string, string>;
     keepWorkspaces: boolean;
+    allowRemote: boolean;
   }) => {
     try {
       process.exitCode = await runCommand(
@@ -70,7 +76,8 @@ program
           portEnv: opts.portEnv,
           bootTimeoutMs: opts.bootTimeoutMs,
           env: opts.env,
-          keepWorkspaces: opts.keepWorkspaces
+          keepWorkspaces: opts.keepWorkspaces,
+          allowRemote: opts.allowRemote
         },
         logger
       );

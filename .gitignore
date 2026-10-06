@@ -4,3 +4,5 @@ coverage/
 .twin/
 *.log
 .DS_Store
+examples/*/node_modules/
+examples/*/uploads/

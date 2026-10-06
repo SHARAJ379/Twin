@@ -1,0 +1,15 @@
+{
+  "name": "broken-express",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deliberately broken Express app used as a Twin fixture: in-memory sessions, in-memory data, local-disk uploads.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "multer": "^2.4.0"
+  }
+}

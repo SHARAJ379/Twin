@@ -4,22 +4,13 @@ import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
 import type { ArtifactStore, Lock, RunHandle } from "../../ports/artifactStore.js";
+import { isProcessAlive } from "../process/isProcessAlive.js";
 
 interface LockFileContents {
   pid: number;
   startedAt: string;
   /** Distinguishes our own lock file instance so release() never deletes a lock someone else now owns. */
   token: string;
-}
-
-/** Returns true if `pid` names a live process. Node emulates signal 0 on Windows too. */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function makeRunId(now: Date): string {

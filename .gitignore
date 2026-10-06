@@ -6,3 +6,4 @@ coverage/
 .DS_Store
 examples/*/node_modules/
 examples/*/uploads/
+.claude/

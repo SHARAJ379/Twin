@@ -2,6 +2,7 @@
 import { Command } from "commander";
 
 import { ConsoleLogger } from "../infra/log/consoleLogger.js";
+import { cleanOrphans } from "./commands/clean.js";
 import { printDoctorReport, runDoctorChecks } from "./commands/doctor.js";
 
 const logger = new ConsoleLogger();
@@ -20,9 +21,17 @@ program
     process.exitCode = ok ? 0 : 1;
   });
 
+program
+  .command("clean")
+  .description("Kill any orphaned instance processes left behind by a past run")
+  .action(async () => {
+    await cleanOrphans(process.cwd(), logger);
+    process.exitCode = 0;
+  });
+
 // Placeholders for the rest of the CLI surface (TWIN_ARCHITECTURE.md §2, §16) —
 // registered now so the command surface is stable; wired up milestone by milestone.
-for (const name of ["init", "run", "report", "clean"] as const) {
+for (const name of ["init", "run", "report"] as const) {
   program
     .command(name)
     .description("not implemented yet")

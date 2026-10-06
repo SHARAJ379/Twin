@@ -1,0 +1,235 @@
+{
+  "$id": "https://github.com/SHARAJ379/twin/schemas/scenario.schema.json",
+  "title": "Twin scenario",
+  "type": "object",
+  "required": [
+    "version",
+    "name",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "clients": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "$defs": {
+    "step": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/requestStep"
+        },
+        {
+          "$ref": "#/$defs/restartStep"
+        },
+        {
+          "$ref": "#/$defs/waitStep"
+        }
+      ]
+    },
+    "requestStep": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "request"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "request"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "via": {
+          "type": "string"
+        },
+        "as": {
+          "type": "string"
+        },
+        "request": {
+          "type": "object",
+          "required": [
+            "method",
+            "path"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "method": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "headers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "json": {},
+            "form": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "multipart": {
+              "type": "object",
+              "required": [
+                "generate"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "generate": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "content"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            },
+            "body": {
+              "type": "string"
+            }
+          }
+        },
+        "expect": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "oneOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              ]
+            },
+            "bodyContains": {
+              "type": "string"
+            },
+            "jsonPath": {
+              "type": "object"
+            }
+          }
+        },
+        "save": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "check": {
+          "type": "string"
+        },
+        "after": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "settleMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "restartStep": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "instance"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "restart"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "instance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "enum": [
+            "crash",
+            "graceful"
+          ]
+        },
+        "disk": {
+          "enum": [
+            "fresh",
+            "keep"
+          ]
+        }
+      }
+    },
+    "waitStep": {
+      "type": "object",
+      "required": [
+        "kind",
+        "id",
+        "ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "wait"
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

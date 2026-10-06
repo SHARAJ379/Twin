@@ -88,7 +88,9 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
 
   it("throws E_BOOT_CRASH with a log tail when the start command exits immediately", async () => {
     const ws = await driver.prepare(workspaceSpec("A"));
-    const crashSpec: StartSpec = { ...startSpec, command: 'node -e "process.exit(1)"', bootTimeoutMs: 1000 };
+    // Generous even under heavy concurrent load (the full suite runs many
+    // processes at once): we're testing crash classification, not speed.
+    const crashSpec: StartSpec = { ...startSpec, command: 'node -e "process.exit(1)"', bootTimeoutMs: 3000 };
 
     const err = await driver.start(ws, crashSpec).catch((e: unknown) => e);
     expect(TwinError.isTwinError(err)).toBe(true);

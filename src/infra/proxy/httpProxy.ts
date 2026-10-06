@@ -6,7 +6,8 @@ import type { InstanceHandle } from "../../ports/instanceDriver.js";
 import type { Proxy, ProxyEvent } from "../../ports/proxy.js";
 import { getFreePort } from "../process/portAllocator.js";
 
-const PIN_HEADER = "x-twin-pin";
+/** Shared with infra/http/httpScenarioClient.ts, which is the one sending this header. */
+export const PIN_HEADER = "x-twin-pin";
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",

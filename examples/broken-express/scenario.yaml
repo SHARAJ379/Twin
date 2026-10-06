@@ -29,3 +29,27 @@ steps:
     request: { method: GET, path: "/items/{{itemId}}" }
     expect: { status: 200, bodyContains: "test-item" }
     check: data-consistency
+  - id: upload-file
+    kind: request
+    via: A
+    request:
+      method: POST
+      path: /upload
+      multipart: { generate: { name: "twin-test.txt", content: "twin-upload-{{unique}}" } }
+    expect: { status: 201 }
+    save: { filename: "$.filename" }
+  - id: read-file-other-instance
+    kind: request
+    via: B
+    request: { method: GET, path: "/uploads/{{filename}}" }
+    expect: { status: 200 }
+    check: file-consistency
+  - id: restart-a
+    kind: restart
+    instance: A
+  - id: read-item-after-restart
+    kind: request
+    via: A
+    request: { method: GET, path: "/items/{{itemId}}" }
+    expect: { status: 200 }
+    check: restart-persistence

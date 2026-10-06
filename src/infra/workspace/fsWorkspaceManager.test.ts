@@ -63,4 +63,38 @@ describe("FsWorkspaceManager", () => {
 
     await expect(lstat(root)).rejects.toThrow();
   });
+
+  describe("snapshot", () => {
+    it("records every real file with a sha1, excluding .git/.twin/node_modules", async () => {
+      const manager = new FsWorkspaceManager(root);
+      const pristineDir = await manager.preparePristine(sourceDir, { link: ["node_modules"], ignore: [] });
+      const dirA = await manager.cloneForInstance(pristineDir, "A");
+
+      const entries = await manager.snapshot(dirA);
+
+      const paths = entries.map((e) => e.path).sort();
+      expect(paths).toEqual(["server.js"]);
+      expect(entries[0]!.sha1).toBeDefined();
+      expect(entries[0]!.size).toBeGreaterThan(0);
+    });
+
+    it("picks up a file added after the clone (the point of snapshotting before/after)", async () => {
+      const manager = new FsWorkspaceManager(root);
+      const pristineDir = await manager.preparePristine(sourceDir, { link: [], ignore: [] });
+      const dirA = await manager.cloneForInstance(pristineDir, "A");
+
+      const before = await manager.snapshot(dirA);
+      await mkdir(path.join(dirA, "uploads"), { recursive: true });
+      await writeFile(path.join(dirA, "uploads", "x.png"), "fake-image-bytes");
+      const after = await manager.snapshot(dirA);
+
+      expect(before.map((e) => e.path)).not.toContain("uploads/x.png");
+      expect(after.map((e) => e.path)).toContain("uploads/x.png");
+    });
+
+    it("returns [] for a directory that no longer exists rather than throwing", async () => {
+      const manager = new FsWorkspaceManager(root);
+      expect(await manager.snapshot(path.join(root, "nope"))).toEqual([]);
+    });
+  });
 });

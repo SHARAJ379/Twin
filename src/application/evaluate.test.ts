@@ -43,6 +43,7 @@ describe("evaluate", () => {
       scenario,
       controlResults: [stepResult("create", true), stepResult("read-other", true)],
       splitResults: [stepResult("create", true), stepResult("read-other", false)],
+      workspaceDiffs: [],
       checks: new Map([["data-consistency", passthroughCheck]]),
       profile: "ephemeral"
     });
@@ -55,6 +56,7 @@ describe("evaluate", () => {
       scenario,
       controlResults: [],
       splitResults: [stepResult("create", true), stepResult("read-other", true), stepResult("pause", true)],
+      workspaceDiffs: [],
       checks: new Map([["data-consistency", passthroughCheck]]),
       profile: "ephemeral"
     });
@@ -66,6 +68,7 @@ describe("evaluate", () => {
       scenario,
       controlResults: [],
       splitResults: [stepResult("create", true), stepResult("read-other", true)],
+      workspaceDiffs: [],
       checks: new Map(), // empty registry
       profile: "ephemeral"
     });
@@ -79,6 +82,7 @@ describe("evaluate", () => {
       scenario,
       controlResults: [],
       splitResults: [stepResult("create", true)], // read-other missing
+      workspaceDiffs: [],
       checks: new Map([["data-consistency", passthroughCheck]]),
       profile: "ephemeral"
     });

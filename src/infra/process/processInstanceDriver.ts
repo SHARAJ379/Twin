@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 
 import { TwinError } from "../../domain/errors.js";
+import type { FsSnapshot } from "../../domain/workspaceDiff.js";
 import type {
   InstanceDriver,
   InstanceHandle,
@@ -113,6 +114,12 @@ export class ProcessInstanceDriver implements InstanceDriver {
       opts.disk === "fresh" ? await this.workspaceManager.cloneForInstance(prepared.pristineDir, handle.id) : prior.dir;
 
     return this.spawnOnce({ instance: handle.id, dir }, prior.startSpec);
+  }
+
+  async snapshot(handle: InstanceHandle): Promise<FsSnapshot> {
+    const running = this.running.get(handle.id);
+    if (running === undefined) return { instance: handle.id, entries: [] };
+    return { instance: handle.id, entries: await this.workspaceManager.snapshot(running.dir) };
   }
 
   logs(handle: InstanceHandle): LogTail {

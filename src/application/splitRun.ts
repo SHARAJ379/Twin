@@ -1,5 +1,6 @@
 import type { Scenario } from "../domain/scenario.js";
 import type { StepResult } from "../domain/stepResult.js";
+import { diffSnapshots, type WorkspaceDiff } from "../domain/workspaceDiff.js";
 import type { InstanceDriver, InstanceHandle, StartSpec } from "../ports/instanceDriver.js";
 import type { Proxy } from "../ports/proxy.js";
 import type { ScenarioClient } from "../ports/scenarioClient.js";
@@ -15,6 +16,8 @@ export interface SplitRunSpec {
 
 export interface SplitRunResult {
   results: StepResult[];
+  /** One per instance, each instance's disk before vs. after the whole scenario ran (§7.5/§3 COLLECT). */
+  workspaceDiffs: WorkspaceDiff[];
 }
 
 /**
@@ -35,10 +38,19 @@ export async function runSplitPhase(
     instances.push(await instanceDriver.start(ws, spec.start));
   }
 
+  const before = await Promise.all(instances.map((h) => instanceDriver.snapshot(h)));
+
   const started = await proxy.start(() => instances);
   try {
     const results = await scenarioClient.run(scenario, { proxyUrl: started.url, instanceDriver, instances });
-    return { results };
+
+    // `instances` entries may have been replaced in place by a restart step
+    // (the scenario client mutates the array) - snapshot whatever is
+    // currently running under each original id, not the original handles.
+    const after = await Promise.all(instances.map((h) => instanceDriver.snapshot(h)));
+    const workspaceDiffs = before.map((b, i) => diffSnapshots(b, after[i]!));
+
+    return { results, workspaceDiffs };
   } finally {
     await proxy.stop();
     for (const handle of instances) {

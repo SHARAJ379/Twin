@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { TwinError } from "../../domain/errors.js";
+import { diffSnapshots } from "../../domain/workspaceDiff.js";
 import type { StartSpec, WorkspaceSpec } from "../../ports/instanceDriver.js";
 import { ConsoleLogger } from "../log/consoleLogger.js";
 import { FsWorkspaceManager } from "../workspace/fsWorkspaceManager.js";
@@ -95,5 +96,24 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
     const err = await driver.start(ws, crashSpec).catch((e: unknown) => e);
     expect(TwinError.isTwinError(err)).toBe(true);
     expect((err as TwinError).code).toBe("E_BOOT_CRASH");
+  });
+
+  it("snapshot() reflects a file the instance writes into its own workspace", async () => {
+    const ws = await driver.prepare(workspaceSpec("A"));
+    const handle = await driver.start(ws, startSpec);
+
+    const before = await driver.snapshot(handle);
+    await writeFile(path.join(ws.dir, "uploads-test.txt"), "written while running");
+    const after = await driver.snapshot(handle);
+
+    const diff = diffSnapshots(before, after);
+    expect(diff.added.map((e) => e.path)).toContain("uploads-test.txt");
+
+    await driver.stop(handle, { graceMs: 2000 });
+  });
+
+  it("snapshot() for an instance that was never started returns an empty snapshot, not a throw", async () => {
+    const snap = await driver.snapshot({ id: "ghost", baseUrl: "http://127.0.0.1:1", state: "down" });
+    expect(snap).toEqual({ instance: "ghost", entries: [] });
   });
 });

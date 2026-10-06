@@ -3,11 +3,14 @@ import type { DeploymentProfile } from "../domain/deploymentProfile.js";
 import { resolveRelatedSteps } from "../domain/relatedSteps.js";
 import type { Scenario } from "../domain/scenario.js";
 import type { StepResult } from "../domain/stepResult.js";
+import type { WorkspaceDiff } from "../domain/workspaceDiff.js";
 
 export interface EvaluateInput {
   scenario: Scenario;
   controlResults: StepResult[];
   splitResults: StepResult[];
+  /** From the SPLIT run only - the control run is one throwaway instance, so there's nothing meaningful to diff against. */
+  workspaceDiffs: WorkspaceDiff[];
   /** Injected by the composition root (cli/) - application never imports checks/ directly (layer rule). */
   checks: ReadonlyMap<string, Check>;
   profile: DeploymentProfile;
@@ -43,7 +46,7 @@ export function evaluate(input: EvaluateInput): Finding[] {
         assertion,
         related: resolveRelatedSteps(input.scenario, index, input.splitResults),
         control: controlById.get(step.id),
-        workspaceDiffs: [],
+        workspaceDiffs: input.workspaceDiffs,
         profile: input.profile
       })
     );

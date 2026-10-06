@@ -22,6 +22,7 @@ import { computeExitCode } from "../../report/exitCode.js";
 import { renderMarkdownReport } from "../../report/markdown.js";
 import { buildReportJson } from "../../report/reportJson.js";
 import { renderTerminalReport } from "../../report/terminal.js";
+import { traceFindings } from "../../tracer/traceFindings.js";
 
 export interface RunOptions {
   projectDir: string;
@@ -128,13 +129,17 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       scenarioClient
     );
 
-    const findings = evaluate({
+    const evaluated = evaluate({
       scenario,
       controlResults: control.results,
       splitResults: split.results,
+      workspaceDiffs: split.workspaceDiffs,
       checks: builtInChecks,
       profile: PROFILE
     });
+
+    logger.info("TRACE: mapping any failing checks to likely code locations");
+    const findings = await traceFindings(evaluated, options.projectDir, split.workspaceDiffs);
     const verdict = computeVerdict(findings);
 
     const reportJson = buildReportJson({ scenarioName: scenario.name, profile: PROFILE, findings, verdict });

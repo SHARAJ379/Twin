@@ -1,10 +1,40 @@
-import { cp, mkdir, rm, symlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
 import path from "node:path";
 
 import type { InstanceId } from "../../domain/instance.js";
+import type { FileEntry } from "../../domain/workspaceDiff.js";
 import type { WorkspaceManager, WorkspaceOptions } from "../../ports/workspaceManager.js";
 
 const DEFAULT_IGNORE = [".git", ".twin", "node_modules"];
+const SHA1_SIZE_LIMIT = 5 * 1024 * 1024;
+
+async function walk(dir: string, baseDir: string, skip: ReadonlySet<string>, out: FileEntry[]): Promise<void> {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return; // directory vanished mid-walk (e.g. a dead instance's tmp dir) - nothing to report
+  }
+
+  for (const entry of entries) {
+    if (skip.has(entry.name)) continue;
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      await walk(fullPath, baseDir, skip, out);
+    } else if (entry.isFile()) {
+      // Dirent.isDirectory()/isFile() don't follow symlinks, so the
+      // node_modules junction itself is walked into as "not a file, not a
+      // directory" and silently skipped - exactly what we want, since its
+      // contents are shared across instances and not instance-specific state.
+      const stats = await stat(fullPath);
+      const relativePath = path.relative(baseDir, fullPath).split(path.sep).join("/");
+      const sha1 = stats.size < SHA1_SIZE_LIMIT ? createHash("sha1").update(await readFile(fullPath)).digest("hex") : undefined;
+      out.push({ path: relativePath, size: stats.size, mtimeMs: stats.mtimeMs, sha1 });
+    }
+  }
+}
 
 interface PristineRecord {
   sourceDir: string;
@@ -63,6 +93,12 @@ export class FsWorkspaceManager implements WorkspaceManager {
     }
 
     return dest;
+  }
+
+  async snapshot(dir: string): Promise<FileEntry[]> {
+    const out: FileEntry[] = [];
+    await walk(dir, dir, new Set(DEFAULT_IGNORE), out);
+    return out;
   }
 
   async cleanup(): Promise<void> {

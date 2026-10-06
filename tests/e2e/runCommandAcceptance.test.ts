@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,29 +37,45 @@ describe("twin run: broken => FAIL, fixed => PASS, typo scenario => ERROR", () =
     }
   });
 
-  it("FAILs both checks against examples/broken-express", async () => {
-    twinDirsToClean.push(path.join(brokenExpressDir, ".twin"));
+  it("FAILs all four checks against examples/broken-express, with the tracer attaching real suspects", async () => {
+    const twinDir = path.join(brokenExpressDir, ".twin");
+    twinDirsToClean.push(twinDir);
     const exitCode = await runCommand(
       { ...baseOptions, projectDir: brokenExpressDir, scenarioPath: path.join(brokenExpressDir, "scenario.yaml"), env: {} },
       logger
     );
     expect(exitCode).toBe(1);
-  }, 40_000);
 
-  it("PASSes both checks against examples/fixed-express, given a shared session secret and data file", async () => {
+    const latestId = await readFile(path.join(twinDir, "latest"), "utf8");
+    const report = JSON.parse(await readFile(path.join(twinDir, "runs", latestId, "report.json"), "utf8")) as {
+      verdict: { failed: number };
+      findings: { checkId: string; status: string; suspects: unknown[] }[];
+    };
+    expect(report.verdict.failed).toBe(4);
+    // At least the two file-backed checks (file-consistency, restart-persistence)
+    // must get real tracer evidence, not just an empty suspects list.
+    expect(report.findings.every((f) => f.status === "fail")).toBe(true);
+    expect(report.findings.some((f) => f.suspects.length > 0)).toBe(true);
+  }, 60_000);
+
+  it("PASSes all four checks against examples/fixed-express, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedExpressDir, ".twin"));
-    const dataFile = path.join(await mkdtemp(path.join(os.tmpdir(), "twin-fixed-data-")), "data.json");
+    const sharedDir = await mkdtemp(path.join(os.tmpdir(), "twin-fixed-shared-"));
     const exitCode = await runCommand(
       {
         ...baseOptions,
         projectDir: fixedExpressDir,
         scenarioPath: path.join(fixedExpressDir, "scenario.yaml"),
-        env: { SESSION_SECRET: "test-secret-123", DATA_FILE: dataFile }
+        env: {
+          SESSION_SECRET: "test-secret-123",
+          DATA_FILE: path.join(sharedDir, "data.json"),
+          UPLOAD_DIR: path.join(sharedDir, "uploads")
+        }
       },
       logger
     );
     expect(exitCode).toBe(0);
-  }, 40_000);
+  }, 60_000);
 
   it("ERRORs (never FAILs) on a scenario typo - the control run fails on its own, so I7 blocks a FAIL verdict", async () => {
     twinDirsToClean.push(path.join(brokenExpressDir, ".twin"));

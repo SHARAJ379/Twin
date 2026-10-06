@@ -1,4 +1,5 @@
 import type { InstanceId } from "../domain/instance.js";
+import type { FsSnapshot } from "../domain/workspaceDiff.js";
 
 export interface WorkspaceSpec {
   instance: InstanceId;
@@ -63,4 +64,6 @@ export interface InstanceDriver {
   stop(handle: InstanceHandle, opts: StopOptions): Promise<void>;
   restart(handle: InstanceHandle, opts: RestartOptions): Promise<InstanceHandle>;
   logs(handle: InstanceHandle): LogTail;
+  /** Walks the instance's workspace (§7.5) - take one before and one after the scenario runs, then diff them. */
+  snapshot(handle: InstanceHandle): Promise<FsSnapshot>;
 }

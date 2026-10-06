@@ -164,26 +164,33 @@ export class HttpScenarioClient implements ScenarioClient {
   ): Promise<StepResult> {
     const startedAt = Date.now();
     const clientName = step.as ?? "default";
-    const rendered = renderTemplateDeep(step.request, variables, helpers) as RequestStep["request"];
-    const url = new URL(rendered.path, ctx.proxyUrl);
 
-    const headers: Record<string, string> = { ...rendered.headers };
-    const cookieHeader = cookieJar.headerFor(clientName, rendered.path);
-    if (cookieHeader !== undefined) headers["cookie"] = cookieHeader;
-    if (step.via !== undefined && step.via !== "any") headers[PIN_HEADER] = step.via;
-
-    const { body, contentType } = buildBody(rendered);
-    if (contentType !== undefined) headers["content-type"] ??= contentType;
-
-    const redactedRequest: RedactedRequest = {
-      method: rendered.method,
-      path: rendered.path,
-      headers: redactHeaders(headers, ctx.redactExtraHeaders),
-      bodyPreview: redactBody(typeof body === "string" ? body : undefined, ctx.redactExtraHeaders)
-    };
-
+    // Everything from templating through the fetch call itself can throw
+    // (an undefined {{var}} from a scenario typo, a malformed URL, a
+    // network error) - all of it must become a StepResult.error, never an
+    // exception that crashes the whole run (§7.1: "undefined variable ...
+    // at the step, with the variable name in the message").
+    let redactedRequest: RedactedRequest | undefined;
     let response: Response;
     try {
+      const rendered = renderTemplateDeep(step.request, variables, helpers) as RequestStep["request"];
+      const url = new URL(rendered.path, ctx.proxyUrl);
+
+      const headers: Record<string, string> = { ...rendered.headers };
+      const cookieHeader = cookieJar.headerFor(clientName, rendered.path);
+      if (cookieHeader !== undefined) headers["cookie"] = cookieHeader;
+      if (step.via !== undefined && step.via !== "any") headers[PIN_HEADER] = step.via;
+
+      const { body, contentType } = buildBody(rendered);
+      if (contentType !== undefined) headers["content-type"] ??= contentType;
+
+      redactedRequest = {
+        method: rendered.method,
+        path: rendered.path,
+        headers: redactHeaders(headers, ctx.redactExtraHeaders),
+        bodyPreview: redactBody(typeof body === "string" ? body : undefined, ctx.redactExtraHeaders)
+      };
+
       response = await fetch(url, { method: rendered.method, headers, redirect: "manual", ...(body !== undefined ? { body } : {}) });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -191,10 +198,10 @@ export class HttpScenarioClient implements ScenarioClient {
         stepId: step.id,
         startedAt,
         durationMs: Date.now() - startedAt,
-        request: redactedRequest,
+        ...(redactedRequest !== undefined ? { request: redactedRequest } : {}),
         error: { message },
         expectationsPassed: false,
-        failedExpectations: [`request failed: ${message}`]
+        failedExpectations: [message]
       };
     }
 

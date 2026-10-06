@@ -1,0 +1,28 @@
+name: typo-user-flow
+version: 1
+steps:
+  - id: signup
+    kind: request
+    request: { method: POST, path: /signup, json: { email: "a-{{unique}}@test.com", password: "pw12345" } }
+    expect: { status: [200, 201] }
+    save: { email: "$.email" }
+  - id: login
+    kind: request
+    via: A
+    request: { method: POST, path: /login, json: { email: "{{email}}", password: "pw12345" } }
+    expect: { status: 200 }
+  - id: create-item
+    kind: request
+    via: A
+    # Typo: this route doesn't exist (should be /items) - the control run
+    # itself must fail here, so data-consistency below has to report
+    # ERROR, never FAIL (I7) - that's the behavior this fixture exists to prove.
+    request: { method: POST, path: /itemz, json: { name: "test-item" } }
+    expect: { status: 201 }
+    save: { itemId: "$.id" }
+  - id: read-item-other-instance
+    kind: request
+    via: A
+    request: { method: GET, path: "/items/{{itemId}}" }
+    expect: { status: 200, bodyContains: "test-item" }
+    check: data-consistency

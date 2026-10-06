@@ -1,0 +1,31 @@
+name: basic-user-flow
+version: 1
+steps:
+  - id: signup
+    kind: request
+    request: { method: POST, path: /signup, json: { email: "a-{{unique}}@test.com", password: "pw12345" } }
+    expect: { status: [200, 201] }
+    save: { email: "$.email" }
+  - id: login
+    kind: request
+    via: A
+    request: { method: POST, path: /login, json: { email: "{{email}}", password: "pw12345" } }
+    expect: { status: 200 }
+  - id: me-check
+    kind: request
+    via: B
+    request: { method: GET, path: /me }
+    expect: { status: 200 }
+    check: session-survives-switch
+  - id: create-item
+    kind: request
+    via: A
+    request: { method: POST, path: /items, json: { name: "test-item" } }
+    expect: { status: 201 }
+    save: { itemId: "$.id" }
+  - id: read-item-other-instance
+    kind: request
+    via: B
+    request: { method: GET, path: "/items/{{itemId}}" }
+    expect: { status: 200, bodyContains: "test-item" }
+    check: data-consistency

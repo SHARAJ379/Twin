@@ -1,0 +1,15 @@
+{
+  "name": "fixed-express",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The same app as broken-express, fixed: stateless signed-cookie sessions, data/uploads at shared paths instead of per-instance local state.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "express": "^5.2.1",
+    "multer": "^2.4.0"
+  }
+}

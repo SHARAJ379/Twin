@@ -1,5 +1,5 @@
 {
-  "$id": "https://github.com/SHARAJ379/twin/schemas/scenario.schema.json",
+  "$id": "https://github.com/SHARAJ379/Twin/schemas/scenario.schema.json",
   "title": "Twin scenario",
   "type": "object",
   "required": [

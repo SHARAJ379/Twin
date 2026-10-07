@@ -1,6 +1,6 @@
 # Twin
 
-[![CI](https://github.com/SHARAJ379/twin/actions/workflows/ci.yml/badge.svg)](https://github.com/SHARAJ379/twin/actions/workflows/ci.yml)
+[![CI](https://github.com/SHARAJ379/Twin/actions/workflows/ci.yml/badge.svg)](https://github.com/SHARAJ379/Twin/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
 
@@ -177,7 +177,7 @@ checked-out repo and exposes the report as a step output:
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: SHARAJ379/twin@master
+- uses: SHARAJ379/Twin@master
   with:
     project-dir: .
 ```

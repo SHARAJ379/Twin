@@ -8,11 +8,11 @@
   "author": "Sharaj R Shetty",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SHARAJ379/twin.git"
+    "url": "git+https://github.com/SHARAJ379/Twin.git"
   },
-  "homepage": "https://github.com/SHARAJ379/twin#readme",
+  "homepage": "https://github.com/SHARAJ379/Twin#readme",
   "bugs": {
-    "url": "https://github.com/SHARAJ379/twin/issues"
+    "url": "https://github.com/SHARAJ379/Twin/issues"
   },
   "type": "module",
   "engines": {

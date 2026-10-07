@@ -1,5 +1,9 @@
 # Twin
 
+[![CI](https://github.com/SHARAJ379/twin/actions/workflows/ci.yml/badge.svg)](https://github.com/SHARAJ379/twin/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](package.json)
+
 Runs two copies of your app and shows you where they disagree.
 
 Most apps get built and tested as a single instance. The moment you run two (behind a

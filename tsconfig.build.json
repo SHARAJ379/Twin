@@ -1,0 +1,7 @@
+// What actually ships: the same compiler settings, minus the tests.
+// tsconfig.json still type-checks tests (via `npm run typecheck`) - they just
+// don't belong in dist/ or in the published tarball.
+{
+  "extends": "./tsconfig.json",
+  "exclude": ["node_modules", "dist", "examples", "src/**/*.test.ts", "tests"]
+}

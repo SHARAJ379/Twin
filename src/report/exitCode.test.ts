@@ -14,4 +14,14 @@ describe("computeExitCode", () => {
   it("is 2 when there's an error but no fail", () => {
     expect(computeExitCode({ passed: 1, failed: 0, errored: 1, skipped: 0, safeForMultiInstance: false })).toBe(2);
   });
+
+  // Regression: this used to be 0, so CI went green on a scenario that
+  // verified nothing at all.
+  it("is 2 when no checks ran - Twin verified nothing, so it can't report success", () => {
+    expect(computeExitCode({ passed: 0, failed: 0, errored: 0, skipped: 0, safeForMultiInstance: false })).toBe(2);
+  });
+
+  it("is 2 when every check was skipped", () => {
+    expect(computeExitCode({ passed: 0, failed: 0, errored: 0, skipped: 3, safeForMultiInstance: false })).toBe(2);
+  });
 });

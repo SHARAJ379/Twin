@@ -72,4 +72,37 @@ describe("traceFindings", () => {
     const result = await traceFindings(findings, projectDir, []);
     expect(result[0]!.suspects).toEqual([]);
   });
+
+  // Regression: suspects used to be ordered by whichever rule happened to be
+  // declared first, then capped - so on a real app with several module-level
+  // Maps, the express-session suspect (the one that actually explains a
+  // session failure) got crowded out of the list entirely.
+  it("ranks suspects by the check's declared kind priority, not by rule declaration order", async () => {
+    await writeFile(
+      path.join(projectDir, "server.js"),
+      [
+        'const session = require("express-session");', // memory-session-store, line 1
+        "const a = new Map();", // module-state, line 2
+        "const b = new Map();", // module-state, line 3
+        "const c = new Map();", // module-state, line 4
+        "let nextId = 1;" // module-state (counter), line 5
+      ].join("\n")
+    );
+    // session-survives-switch declares ["memory-session-store", "module-state"].
+    const result = await traceFindings([finding("session-survives-switch", "fail")], projectDir, []);
+
+    expect(result[0]!.suspects[0]).toMatchObject({ kind: "memory-session-store", line: 1 });
+    expect(result[0]!.suspects).toHaveLength(3); // still capped
+  });
+
+  it("orders a lower-confidence suspect after higher-confidence ones of the same kind", async () => {
+    await writeFile(
+      path.join(projectDir, "server.js"),
+      ["let nextId = 1;", "const notes = new Map();"].join("\n") // low confidence first in file order
+    );
+    const result = await traceFindings([finding("data-consistency", "fail")], projectDir, []);
+
+    expect(result[0]!.suspects[0]?.confidence).toBe("medium");
+    expect(result[0]!.suspects.at(-1)?.confidence).toBe("low");
+  });
 });

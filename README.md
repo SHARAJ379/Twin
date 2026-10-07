@@ -32,10 +32,12 @@ twin init    # scaffolds scenario.yaml + twin.config.json
 twin run     # boots your app, runs the scenario, reports what it finds
 ```
 
-`twin init` writes a no-op starter scenario (just a health check) and tries to detect
-how to start your app from `package.json`. Edit `scenario.yaml` to add steps that
-create state via one instance and read it back via the other - that's what actually
-exercises multi-instance bugs:
+`twin init` writes a **placeholder** starter scenario and tries to detect how to start
+your app from `package.json`. The placeholder hits `GET /health` - if your app has no
+such route, that step will fail and Twin will tell you so (exit `2`) rather than
+pretend everything is fine. Either point it at a route you do have, or go straight to
+the real thing: edit `scenario.yaml` to add steps that create state via one instance
+and read it back via the other, which is what actually exercises multi-instance bugs:
 
 ```yaml
 name: basic-user-flow
@@ -152,13 +154,21 @@ Checks that your machine can run Twin (Node version, platform, git).
 Kills any orphaned instance processes left behind by a past run that didn't get
 torn down cleanly (crash, Ctrl-C mid-run, etc).
 
+```
+--project <dir>    project directory to clean (default: cwd)
+```
+
 ## Exit codes
 
 | code | meaning                                                             |
 | ---- | ---------------------------------------------------------------------- |
-| `0`  | every check passed - safe to run more than one instance                |
+| `0`  | at least one check passed and nothing failed - safe to run more than one instance |
 | `1`  | at least one check failed - a real multi-instance bug was found        |
-| `2`  | Twin itself couldn't tell (bad scenario, boot failure, Twin's own error) |
+| `2`  | Twin couldn't tell (bad scenario, boot failure, Twin's own error, **or nothing was verified at all**) |
+
+That last case matters: a scenario with nothing tagged `check:`, or whose steps
+failed their own `expect:`, exits `2` rather than `0`. Twin will not report
+success for a run that verified nothing - silence is not a pass.
 
 ## Use in CI
 
@@ -171,6 +181,21 @@ checked-out repo and exposes the report as a step output:
   with:
     project-dir: .
 ```
+
+## Troubleshooting
+
+Twin prints the failing instance's own log tail inline, which usually says it
+outright. The common ones:
+
+| symptom | cause | fix |
+| --- | --- | --- |
+| `E_BOOT_CRASH`, log says `Cannot find module .../dist/...` | the app compiles before it runs | `--build "npm run build"` (or set `"build"` in `twin.config.json`) |
+| `E_BOOT_TIMEOUT`, app seems fine on its own | Twin polls `/health`, your app doesn't serve it | `--health-path /healthz` |
+| `E_BOOT_TIMEOUT`, app logs that it started on the wrong port | the app doesn't read `PORT` | `--port-env APP_PORT` |
+| `scenario-ran-as-written` error | a step didn't match its own `expect:` | fix the route/status in `scenario.yaml` - the message names the step and what it got |
+| `No checks ran` | nothing in the scenario is tagged `check:` | tag the step that reads state back via the *other* instance |
+| `E_UNSAFE_ENV` | something in the environment looks like a real database | point it at a local one, or `--allow-remote` if you really mean it |
+| `E_NO_STACK` / `E_AMBIGUOUS_STACK` | Twin can't guess your start command | `--start "<command>"` |
 
 ## How it works
 
@@ -189,6 +214,11 @@ checked-out repo and exposes the report as a step output:
    instance's workspace before/after).
 6. **REPORT** - writes `report.json` / `report.md` to `.twin/runs/<id>/`, prints a
    terminal summary with a ready-to-paste fix prompt per failure, and exits 0/1/2.
+
+Each instance's own stdout/stderr is kept at `.twin/runs/<id>/logs/<instance>.log`,
+and the tail of it is printed inline when an instance fails to boot - that output is
+usually the whole diagnosis (a missing build step, a wrong port env var, a crash on
+startup).
 
 Every run is **ephemeral**: Twin clones your project into temp workspaces per
 instance (symlinking `node_modules`), runs there, and tears everything down

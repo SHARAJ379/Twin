@@ -1,6 +1,6 @@
 {
   "name": "twin",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "description": "Runs two copies of your app and shows you where they disagree.",
   "keywords": ["testing", "multi-instance", "differential-testing", "cli", "regression-testing"],
@@ -21,14 +21,17 @@
   "bin": {
     "twin": "./dist/cli/index.js"
   },
+  "files": ["dist", "README.md", "LICENSE"],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
     "depcheck": "depcruise src --config .dependency-cruiser.cjs",
-    "verify": "npm run lint && npm run depcheck && npm run build && npm run test"
+    "verify": "npm run lint && npm run depcheck && npm run typecheck && npm run build && npm run test",
+    "prepublishOnly": "npm run verify"
   },
   "dependencies": {
     "ajv": "^8.20.0",

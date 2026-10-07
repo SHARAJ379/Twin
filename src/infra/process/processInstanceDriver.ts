@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
+import { createWriteStream, mkdirSync } from "node:fs";
 import { createConnection } from "node:net";
+import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
 import type { FsSnapshot } from "../../domain/workspaceDiff.js";
@@ -33,9 +35,19 @@ interface PreparedRecord {
 interface RunningInstance {
   pid: number;
   dir: string;
-  logs: LogRingBuffer;
+  logs: LogTail;
   startSpec: StartSpec;
   startedAt: string;
+}
+
+/**
+ * Captures an instance's output twice over: an in-memory tail for the
+ * `logTail` on a boot failure, and (when a log dir is configured) a file the
+ * user can still read after the run.
+ */
+interface LogSink extends LogTail {
+  write(chunk: Buffer): void;
+  close(): void;
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -113,8 +125,27 @@ export class ProcessInstanceDriver implements InstanceDriver {
     private readonly workspaceManager: WorkspaceManager,
     private readonly logger: Logger,
     /** When set, pids.json is rewritten after every spawn/stop so `twin clean` can reap orphans (§7.3). */
-    private readonly pidFilePath?: string
+    private readonly pidFilePath?: string,
+    /** When set, each instance's output is also written to `<logDir>/<instance>.log`, readable after the run. */
+    private readonly logDir?: string
   ) {}
+
+  private openLogSink(instance: string): LogSink {
+    const buffer = new LogRingBuffer();
+    if (this.logDir === undefined) {
+      return { lines: (n) => buffer.lines(n), write: (chunk) => buffer.write(chunk), close: () => undefined };
+    }
+    mkdirSync(this.logDir, { recursive: true });
+    const stream = createWriteStream(path.join(this.logDir, `${instance}.log`), { flags: "a" });
+    return {
+      lines: (n) => buffer.lines(n),
+      write: (chunk) => {
+        buffer.write(chunk);
+        stream.write(chunk);
+      },
+      close: () => stream.end()
+    };
+  }
 
   async prepare(spec: WorkspaceSpec): Promise<PreparedWorkspace> {
     const pristineDir = await this.workspaceManager.preparePristine(spec.sourceDir, {
@@ -181,21 +212,24 @@ export class ProcessInstanceDriver implements InstanceDriver {
   private async spawnOnce(ws: PreparedWorkspace, spec: StartSpec): Promise<InstanceHandle> {
     const port = await getFreePort();
     const baseUrl = `http://127.0.0.1:${port}`;
-    const logs = new LogRingBuffer();
+    const logs = this.openLogSink(ws.instance);
 
     const child = spawn(spec.command, {
       cwd: ws.dir,
       shell: true,
-      // On POSIX this makes the child its own process-group leader, so
-      // killTree() can signal the whole tree via -pid. On Windows, Node's
-      // docs call this out separately: detached is *also* what lets the
-      // child outlive this process if we crash - without it we lose the
-      // orphan-survival guarantee twin clean depends on.
-      detached: true,
+      // POSIX only: makes the child its own process-group leader so killTree()
+      // can signal the whole tree via -pid. Deliberately NOT set on Windows -
+      // DETACHED_PROCESS there makes the child's output uncapturable by every
+      // means (pipes, inherited fds, even the child shell's own `> file`), which
+      // left boot failures undiagnosable. Nothing is lost: killTree uses
+      // `taskkill /T` to walk the tree on Windows, and Windows doesn't kill
+      // children when a parent dies, so `twin clean`'s orphan case still holds.
+      detached: process.platform !== "win32",
       windowsHide: true,
       env: { ...process.env, ...spec.env, [spec.portEnv]: String(port) },
       stdio: ["ignore", "pipe", "pipe"]
     });
+
     let settled = false;
     let spawnError: unknown;
     // spawn() reports a failed exec (ENOENT, EACCES, a cwd that vanished
@@ -214,6 +248,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
 
     child.stdout?.on("data", (chunk: Buffer) => logs.write(chunk));
     child.stderr?.on("data", (chunk: Buffer) => logs.write(chunk));
+    child.once("exit", () => logs.close());
 
     const pid = child.pid;
     if (pid === undefined) {
@@ -278,7 +313,13 @@ export class ProcessInstanceDriver implements InstanceDriver {
         alreadyDead
           ? `Instance ${ws.instance} crashed on boot${exitInfo.length > 0 ? ` (${exitInfo})` : ""}.`
           : `Instance ${ws.instance} did not become healthy within ${spec.bootTimeoutMs}ms.`,
-        { details: { instance: ws.instance, logTail: logs.lines(30) }, cause: err }
+        {
+          hint: alreadyDead
+            ? `\`${spec.command}\` exited instead of serving. If the app needs compiling first, pass --build "<command>". The log tail below is the app's own output.`
+            : `The app started but never answered ${spec.healthPath} with a non-5xx status. Check --health-path (is it really ${spec.healthPath}?) and --port-env (does the app read ${spec.portEnv}?).`,
+          details: { instance: ws.instance, logTail: logs.lines(30) },
+          cause: err
+        }
       );
     }
 

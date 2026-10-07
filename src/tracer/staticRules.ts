@@ -20,18 +20,52 @@ export interface SuspectRule {
 
 // Trailing line comments ("const items = []; // { id, name }") are common
 // enough in real code that the pattern has to tolerate them explicitly.
-const MODULE_STATE_PATTERN = /^(const|let|var)\s+\w+\s*=\s*(\{\}|\[\])\s*;?\s*(\/\/.*)?$/;
+// Map/Set are as common as {} and [] for this in modern code, so they belong
+// in the same rule - the failure mode is identical.
+const MODULE_STATE_PATTERN =
+  /^(const|let|var)\s+\w+\s*=\s*(\{\}|\[\]|new\s+(Map|Set|WeakMap|WeakSet)\s*\(.*\)|Object\.create\(\s*null\s*\))\s*;?\s*(\/\/.*)?$/;
 
 export const moduleStateRule: SuspectRule = {
   id: "module-level-empty-container",
   kind: "module-state",
   confidence: "medium",
   rationale:
-    "a top-level object/array initialized once and mutated by request handlers lives in this process's memory only - a second instance, or this one after a restart, starts with an empty one",
+    "a top-level object/array/Map initialized once and mutated by request handlers lives in this process's memory only - a second instance, or this one after a restart, starts with an empty one",
   test: (line) => MODULE_STATE_PATTERN.test(line),
   fixtures: {
-    matches: ["const sessions = {};", "let items = [];", "var cache = {}", "const items = []; // { id, name }"],
-    nonMatches: ["  const sessions = {};", "const CONFIG = { port: 3000 };", "const items = getItems();"]
+    matches: [
+      "const sessions = {};",
+      "let items = [];",
+      "var cache = {}",
+      "const items = []; // { id, name }",
+      "const notes = new Map();",
+      "let seen = new Set();",
+      'const cache = new Map([["a", 1]]);',
+      "const registry = Object.create(null);"
+    ],
+    nonMatches: [
+      "  const sessions = {};",
+      "  const notes = new Map();",
+      "const CONFIG = { port: 3000 };",
+      "const items = getItems();"
+    ]
+  }
+};
+
+// Only `let`/`var`: a mutable module-level number is a counter, and two
+// instances each start it from the same value and hand out colliding ids.
+const MODULE_COUNTER_PATTERN = /^(let|var)\s+\w+\s*=\s*-?\d+\s*;?\s*(\/\/.*)?$/;
+
+export const moduleCounterRule: SuspectRule = {
+  id: "module-level-counter",
+  kind: "module-state",
+  confidence: "low",
+  rationale:
+    "a top-level mutable counter (next id, sequence number) restarts from its initial value in every process - two instances hand out the same ids, so records collide or overwrite each other",
+  test: (line) => MODULE_COUNTER_PATTERN.test(line),
+  fixtures: {
+    matches: ["let nextId = 1;", "var counter = 0", "let nextNoteId = 1; // ids start at 1"],
+    nonMatches: ["const PORT = 3000;", "  let i = 0;", 'let name = "x";', "let total = items.length;"]
   }
 };
 
@@ -84,6 +118,7 @@ export const sqliteFileRule: SuspectRule = {
 /** Every static rule. New rules must ship with both fixture kinds - enforced by staticRules.test.ts. */
 export const staticRules: SuspectRule[] = [
   moduleStateRule,
+  moduleCounterRule,
   expressSessionNoStoreRule,
   fsWriteRelativePathRule,
   sqliteFileRule

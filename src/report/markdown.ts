@@ -1,9 +1,23 @@
 import type { Finding } from "../domain/check.js";
 import type { DeploymentProfile } from "../domain/deploymentProfile.js";
-import type { Verdict } from "../domain/verdict.js";
+import { totalChecks, verdictHeadline, type Verdict } from "../domain/verdict.js";
 import { buildFixPrompt } from "./fixPrompt.js";
 
 const HEADING: Record<Finding["status"], string> = { pass: "PASS", fail: "FAIL", error: "ERROR", skipped: "SKIPPED" };
+
+function verdictSummary(verdict: Verdict): string {
+  const total = totalChecks(verdict);
+  switch (verdictHeadline(verdict)) {
+    case "safe":
+      return `**${verdict.passed} of ${total} checks passed** - this app looks safe to run on more than one instance.`;
+    case "unsafe":
+      return `**${verdict.failed + verdict.errored} of ${total} checks failed or errored** - this app is NOT safe to run on more than one instance.`;
+    case "inconclusive":
+      return total === 0
+        ? "**No checks ran** - nothing in this scenario is tagged with `check:`, so Twin can't tell you anything about this app yet."
+        : `**Twin could not tell** - ${verdict.passed} of ${total} checks passed, ${verdict.errored} errored, ${verdict.skipped} skipped.`;
+  }
+}
 
 /** The human/Claude-friendly report (§7.8): includes a ready-to-paste fix prompt per failed check. */
 export function renderMarkdownReport(
@@ -12,15 +26,12 @@ export function renderMarkdownReport(
   verdict: Verdict,
   profile: DeploymentProfile
 ): string {
-  const total = verdict.passed + verdict.failed + verdict.errored + verdict.skipped;
   const lines: string[] = [
     `# Twin report: ${scenarioName}`,
     "",
     `Profile: \`${profile}\``,
     "",
-    verdict.safeForMultiInstance
-      ? `**${verdict.passed} of ${total} checks passed** - this app looks safe to run on more than one instance.`
-      : `**${verdict.failed + verdict.errored} of ${total} checks failed or errored** - this app is NOT safe to run on more than one instance.`,
+    verdictSummary(verdict),
     ""
   ];
 

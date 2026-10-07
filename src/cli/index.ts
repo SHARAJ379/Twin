@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
+
 import { Command } from "commander";
 
 import { TwinError } from "../domain/errors.js";
@@ -19,6 +21,14 @@ async function runGuarded(action: () => Promise<number>): Promise<void> {
   } catch (err) {
     if (TwinError.isTwinError(err)) {
       logger.error(err.message, { code: err.code, ...(err.hint !== undefined ? { hint: err.hint } : {}) });
+      // The app's own output is usually the whole diagnosis for a boot
+      // failure, so print it rather than burying it in details.
+      const logTail = err.details?.logTail;
+      if (Array.isArray(logTail) && logTail.length > 0) {
+        console.error(`\n--- last ${logTail.length} line(s) from the app ---`);
+        for (const line of logTail) console.error(String(line));
+        console.error("---");
+      }
       process.exitCode = err.exitCode;
     } else {
       logger.error(err instanceof Error ? err.message : String(err));
@@ -27,10 +37,14 @@ async function runGuarded(action: () => Promise<number>): Promise<void> {
   }
 }
 
+// Read from package.json rather than hardcoding: a second copy of the version
+// here would silently drift from the published one on the next release.
+const { version } = createRequire(import.meta.url)("../../package.json") as { version: string };
+
 program
   .name("twin")
   .description("Runs two copies of your app and shows you where they disagree.")
-  .version("0.0.1");
+  .version(version);
 
 program
   .command("doctor")
@@ -43,8 +57,9 @@ program
 program
   .command("clean")
   .description("Kill any orphaned instance processes left behind by a past run")
-  .action(async () => {
-    await cleanOrphans(process.cwd(), logger);
+  .option("--project <dir>", "project directory to clean", process.cwd())
+  .action(async (opts: { project: string }) => {
+    await cleanOrphans(opts.project, logger);
     process.exitCode = 0;
   });
 

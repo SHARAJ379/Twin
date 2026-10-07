@@ -119,6 +119,37 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
     expect(snap).toEqual({ instance: "ghost", entries: [] });
   });
 
+  // Regression: with `detached: true` on Windows the child's output is
+  // uncapturable by every means (pipes, inherited fds, even the child shell's
+  // own `> file`), so every boot failure there came back with an empty log
+  // tail and no way to tell why the app died.
+  it("captures the app's own output in the boot failure's log tail, on every platform", async () => {
+    const ws = await driver.prepare(workspaceSpec("A"));
+    const noisyCrash: StartSpec = {
+      ...startSpec,
+      command: `node -e "console.error('TWIN-TEST-MARKER: why it died'); process.exit(1)"`,
+      bootTimeoutMs: 1500
+    };
+
+    const err = await driver.start(ws, noisyCrash).catch((e: unknown) => e);
+
+    expect(TwinError.isTwinError(err)).toBe(true);
+    const logTail = (err as TwinError).details?.logTail as string[] | undefined;
+    expect(logTail?.join("\n")).toContain("TWIN-TEST-MARKER: why it died");
+  });
+
+  it("also writes each instance's output to a log file when a log dir is configured", async () => {
+    const logDir = path.join(root, "logs");
+    const loggingDriver = new ProcessInstanceDriver(new FsWorkspaceManager(root), logger, undefined, logDir);
+    const ws = await loggingDriver.prepare(workspaceSpec("A"));
+
+    await loggingDriver
+      .start(ws, { ...startSpec, command: `node -e "console.log('TO-FILE-MARKER'); process.exit(1)"`, bootTimeoutMs: 1500 })
+      .catch(() => undefined);
+
+    await expect(readFile(path.join(logDir, "A.log"), "utf8")).resolves.toContain("TO-FILE-MARKER");
+  });
+
   it("runs the build command in the instance's workspace before start, and fails fast with E_BUILD_FAILED on a bad one", async () => {
     const ws = await driver.prepare(workspaceSpec("A"));
     const buildSpec: StartSpec = { ...startSpec, build: 'node -e "process.exit(1)"' };

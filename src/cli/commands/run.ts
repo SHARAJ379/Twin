@@ -128,7 +128,12 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
 
     const run = await store.createRun();
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));
-    const instanceDriver = new ProcessInstanceDriver(workspaceManager, logger, store.pathFor(run, "pids.json"));
+    const instanceDriver = new ProcessInstanceDriver(
+      workspaceManager,
+      logger,
+      store.pathFor(run, "pids.json"),
+      store.pathFor(run, "logs")
+    );
     const scenarioClient = new HttpScenarioClient();
     const startSpec = { command: start, build, portEnv, env, healthPath, bootTimeoutMs };
 

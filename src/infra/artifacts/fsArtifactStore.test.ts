@@ -26,6 +26,27 @@ describe("FsArtifactStore", () => {
     expect(store.pathFor(run, "report.json")).toBe(path.join(run.dir, "report.json"));
   });
 
+  // Regression: run ids were truncated to whole seconds, so two runs started
+  // in the same second shared one artifact dir AND one temp workspace root -
+  // and the first one's cleanup() deleted the second's workspace mid-run.
+  it("gives two runs created in the same second distinct ids and directories", async () => {
+    const store = new FsArtifactStore(projectDir);
+    const runs = await Promise.all([store.createRun(), store.createRun(), store.createRun()]);
+
+    const ids = new Set(runs.map((r) => r.id));
+    expect(ids.size).toBe(3);
+    expect(new Set(runs.map((r) => r.dir)).size).toBe(3);
+  });
+
+  it("keeps run ids lexically sortable in chronological order (pruneOldRuns depends on it)", async () => {
+    const store = new FsArtifactStore(projectDir);
+    const first = await store.createRun();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await store.createRun();
+
+    expect([second.id, first.id].sort()).toEqual([first.id, second.id]);
+  });
+
   it("writes a latest pointer file (no symlink, for Windows compatibility)", async () => {
     const store = new FsArtifactStore(projectDir);
     const run = await store.createRun();

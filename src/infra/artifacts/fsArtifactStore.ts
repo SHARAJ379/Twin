@@ -14,8 +14,14 @@ interface LockFileContents {
 }
 
 function makeRunId(now: Date): string {
-  // Colons are invalid in Windows filenames, so this cannot be a raw ISO string.
-  return now.toISOString().replace(/:/g, "-").replace(/\.\d+Z$/, "Z");
+  // Colons are invalid in Windows filenames, so this cannot be a raw ISO
+  // string. Milliseconds and a random suffix are both load-bearing: the id
+  // names this run's artifact dir AND its temp workspace root, so two runs
+  // started in the same second would share both - and the first one's
+  // cleanup() would delete the second's workspace out from under it. Fixed
+  // widths keep a lexical sort chronological, which pruneOldRuns relies on.
+  const stamp = now.toISOString().replace(/:/g, "-").replace(/\./g, "-");
+  return `${stamp}-${randomUUID().slice(0, 8)}`;
 }
 
 /** FS-backed ArtifactStore rooted at `<projectDir>/.twin` (invariant I2). */

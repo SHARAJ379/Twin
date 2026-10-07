@@ -27,16 +27,24 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
 
   if (options.mode === "crash") {
     safeKillGroup(pid, "SIGKILL");
-    return;
+  } else {
+    safeKillGroup(pid, "SIGTERM");
+    const deadline = Date.now() + options.graceMs;
+    while (Date.now() < deadline && isProcessAlive(pid)) {
+      await sleep(50);
+    }
+    if (isProcessAlive(pid)) {
+      safeKillGroup(pid, "SIGKILL");
+    }
   }
 
-  safeKillGroup(pid, "SIGTERM");
-  const deadline = Date.now() + options.graceMs;
-  while (Date.now() < deadline && isProcessAlive(pid)) {
-    await sleep(50);
-  }
-  if (isProcessAlive(pid)) {
-    safeKillGroup(pid, "SIGKILL");
+  // A signal being sent isn't the same as the OS having reaped the process -
+  // that's asynchronous even for SIGKILL, and slow/loaded runners (macOS CI
+  // in particular) can expose the gap. Callers rely on isProcessAlive(pid)
+  // being accurate the instant this resolves, so confirm it before returning.
+  const confirmDeadline = Date.now() + 2000;
+  while (Date.now() < confirmDeadline && isProcessAlive(pid)) {
+    await sleep(20);
   }
 }
 

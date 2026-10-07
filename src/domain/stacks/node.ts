@@ -1,22 +1,5 @@
-import type { SuspectKind } from "../domain/suspect.js";
-
-export interface SuspectRuleFixtures {
-  /** Snippets that must produce at least one match - proof the rule actually fires. */
-  matches: string[];
-  /** Snippets that must produce zero matches - proof the rule isn't trigger-happy. */
-  nonMatches: string[];
-}
-
-export interface SuspectRule {
-  id: string;
-  kind: SuspectKind;
-  /** Static rules are capped below "high" (§6.5) - only a workspace-diff match earns that. */
-  confidence: "medium" | "low";
-  rationale: string;
-  /** `line` is one source line; `fullFileContent` lets a rule look for cross-line context (e.g. "is there a store: anywhere in this file"). */
-  test: (line: string, fullFileContent: string) => boolean;
-  fixtures: SuspectRuleFixtures;
-}
+import type { StackDetectionInput, StackProfile } from "../stack.js";
+import type { SuspectRule } from "../suspectRule.js";
 
 // Trailing line comments ("const items = []; // { id, name }") are common
 // enough in real code that the pattern has to tolerate them explicitly.
@@ -115,11 +98,53 @@ export const sqliteFileRule: SuspectRule = {
   }
 };
 
-/** Every static rule. New rules must ship with both fixture kinds - enforced by staticRules.test.ts. */
-export const staticRules: SuspectRule[] = [
-  moduleStateRule,
-  moduleCounterRule,
-  expressSessionNoStoreRule,
-  fsWriteRelativePathRule,
-  sqliteFileRule
-];
+/** Scripts that exist for reasons other than "this boots the app" - never guessed as a start command. */
+const NON_START_SCRIPTS = new Set([
+  "test",
+  "lint",
+  "build",
+  "depcheck",
+  "verify",
+  "prepare",
+  "preinstall",
+  "postinstall",
+  "pretest",
+  "posttest",
+  "typecheck",
+  "format",
+  "clean"
+]);
+
+/** Checked in order; the first one present in package.json's scripts wins. */
+const PRIORITY_SCRIPTS = ["start", "dev", "serve"];
+
+function resolveStartCommand(input: StackDetectionInput): string | undefined {
+  const manifest = input.files["package.json"];
+  if (manifest === undefined) return undefined;
+
+  let scripts: Record<string, unknown>;
+  try {
+    scripts = (JSON.parse(manifest) as { scripts?: Record<string, unknown> }).scripts ?? {};
+  } catch {
+    return undefined; // malformed package.json - detection can't say anything useful
+  }
+
+  for (const name of PRIORITY_SCRIPTS) {
+    if (typeof scripts[name] === "string") return name === "start" ? "npm start" : `npm run ${name}`;
+  }
+
+  const candidates = Object.keys(scripts).filter((name) => typeof scripts[name] === "string" && !NON_START_SCRIPTS.has(name));
+  return candidates.length === 1 ? `npm run ${candidates[0]}` : undefined;
+}
+
+export const nodeStack: StackProfile = {
+  id: "node",
+  displayName: "Node.js",
+  markers: ["package.json"],
+  reads: ["package.json"],
+  linkDirs: ["node_modules"],
+  ignoreDirs: ["node_modules", "dist", "build", ".next", "coverage"],
+  sourceExtensions: [".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"],
+  rules: [moduleStateRule, moduleCounterRule, expressSessionNoStoreRule, fsWriteRelativePathRule, sqliteFileRule],
+  resolveStartCommand
+};

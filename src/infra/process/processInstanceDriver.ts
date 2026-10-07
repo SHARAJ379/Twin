@@ -213,8 +213,12 @@ export class ProcessInstanceDriver implements InstanceDriver {
     const port = await getFreePort();
     const baseUrl = `http://127.0.0.1:${port}`;
     const logs = this.openLogSink(ws.instance);
+    // Most non-Node servers take the port as an argument rather than reading
+    // it from the environment, and `$PORT`/`%PORT%` isn't portable across
+    // cmd.exe and sh - so Twin substitutes it before handing the command over.
+    const command = spec.command.replaceAll("{{port}}", String(port));
 
-    const child = spawn(spec.command, {
+    const child = spawn(command, {
       cwd: ws.dir,
       shell: true,
       // POSIX only: makes the child its own process-group leader so killTree()

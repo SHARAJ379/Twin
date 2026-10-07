@@ -1,5 +1,6 @@
 import type { Finding } from "../domain/check.js";
 import type { CheckId } from "../domain/scenario.js";
+import type { StackProfile } from "../domain/stack.js";
 import type { Suspect, SuspectKind } from "../domain/suspect.js";
 import type { WorkspaceDiff } from "../domain/workspaceDiff.js";
 import { findDynamicSuspects } from "./findDynamicSuspects.js";
@@ -56,11 +57,16 @@ function rankSuspects(suspects: Suspect[], kindPriority: SuspectKind[]): Suspect
  * evidence first (§7.6). Non-fatal by design - a finding simply keeps an
  * empty suspects list if nothing is found, never an error.
  */
-export async function traceFindings(findings: Finding[], projectDir: string, workspaceDiffs: WorkspaceDiff[]): Promise<Finding[]> {
+export async function traceFindings(
+  findings: Finding[],
+  projectDir: string,
+  workspaceDiffs: WorkspaceDiff[],
+  stack: StackProfile
+): Promise<Finding[]> {
   if (!findings.some((f) => f.status === "fail")) return findings; // nothing to trace
 
-  const sourceFiles = await listSourceFiles(projectDir);
-  const staticSuspects = await findStaticSuspects(sourceFiles, projectDir);
+  const sourceFiles = await listSourceFiles(projectDir, stack.sourceExtensions, stack.ignoreDirs);
+  const staticSuspects = await findStaticSuspects(sourceFiles, projectDir, stack.rules);
   const dynamicSuspects = (
     await Promise.all(workspaceDiffs.map((diff) => findDynamicSuspects(projectDir, diff, sourceFiles)))
   ).flat();

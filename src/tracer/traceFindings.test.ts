@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { Finding } from "../domain/check.js";
 import type { WorkspaceDiff } from "../domain/workspaceDiff.js";
+import { nodeStack } from "../domain/stacks/node.js";
 import { traceFindings } from "./traceFindings.js";
 
 function finding(checkId: Finding["checkId"], status: Finding["status"]): Finding {
@@ -26,14 +27,14 @@ describe("traceFindings", () => {
 
   it("leaves pass/error/skipped findings completely untouched", async () => {
     const findings = [finding("data-consistency", "pass"), finding("data-consistency", "error")];
-    const result = await traceFindings(findings, projectDir, []);
+    const result = await traceFindings(findings, projectDir, [], nodeStack);
     expect(result).toEqual(findings);
   });
 
   it("is a no-op (skips the scan entirely) when nothing failed", async () => {
     await writeFile(path.join(projectDir, "server.js"), "const sessions = {};\n");
     const findings = [finding("session-survives-switch", "pass")];
-    const result = await traceFindings(findings, projectDir, []);
+    const result = await traceFindings(findings, projectDir, [], nodeStack);
     expect(result[0]!.suspects).toEqual([]);
   });
 
@@ -41,7 +42,7 @@ describe("traceFindings", () => {
     await writeFile(path.join(projectDir, "server.js"), "const sessions = {};\n");
     const findings = [finding("data-consistency", "fail")];
 
-    const result = await traceFindings(findings, projectDir, []);
+    const result = await traceFindings(findings, projectDir, [], nodeStack);
 
     expect(result[0]!.suspects).toHaveLength(1);
     expect(result[0]!.suspects[0]).toMatchObject({ kind: "module-state", confidence: "medium" });
@@ -51,7 +52,7 @@ describe("traceFindings", () => {
     await writeFile(path.join(projectDir, "server.js"), 'const sqlite3 = require("better-sqlite3");\n'); // sqlite-file kind
     const findings = [finding("session-survives-switch", "fail")]; // only wants memory-session-store
 
-    const result = await traceFindings(findings, projectDir, []);
+    const result = await traceFindings(findings, projectDir, [], nodeStack);
     expect(result[0]!.suspects).toEqual([]);
   });
 
@@ -60,7 +61,7 @@ describe("traceFindings", () => {
     const diff: WorkspaceDiff = { instance: "A", added: [{ path: "uploads/x.png", size: 1, mtimeMs: 1 }], modified: [], removed: [] };
     const findings = [finding("file-consistency", "fail")];
 
-    const result = await traceFindings(findings, projectDir, [diff]);
+    const result = await traceFindings(findings, projectDir, [diff], nodeStack);
 
     expect(result[0]!.suspects[0]?.source).toBe("dynamic");
     expect(result[0]!.suspects[0]?.confidence).toBe("high");
@@ -69,7 +70,7 @@ describe("traceFindings", () => {
   it("returns the finding unchanged (empty suspects) when nothing matches", async () => {
     await writeFile(path.join(projectDir, "server.js"), "app.get('/health', (req, res) => res.sendStatus(200));\n");
     const findings = [finding("data-consistency", "fail")];
-    const result = await traceFindings(findings, projectDir, []);
+    const result = await traceFindings(findings, projectDir, [], nodeStack);
     expect(result[0]!.suspects).toEqual([]);
   });
 
@@ -89,7 +90,7 @@ describe("traceFindings", () => {
       ].join("\n")
     );
     // session-survives-switch declares ["memory-session-store", "module-state"].
-    const result = await traceFindings([finding("session-survives-switch", "fail")], projectDir, []);
+    const result = await traceFindings([finding("session-survives-switch", "fail")], projectDir, [], nodeStack);
 
     expect(result[0]!.suspects[0]).toMatchObject({ kind: "memory-session-store", line: 1 });
     expect(result[0]!.suspects).toHaveLength(3); // still capped
@@ -100,7 +101,7 @@ describe("traceFindings", () => {
       path.join(projectDir, "server.js"),
       ["let nextId = 1;", "const notes = new Map();"].join("\n") // low confidence first in file order
     );
-    const result = await traceFindings([finding("data-consistency", "fail")], projectDir, []);
+    const result = await traceFindings([finding("data-consistency", "fail")], projectDir, [], nodeStack);
 
     expect(result[0]!.suspects[0]?.confidence).toBe("medium");
     expect(result[0]!.suspects.at(-1)?.confidence).toBe("low");

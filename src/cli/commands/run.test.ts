@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -141,6 +141,36 @@ describe("runCommand twin.config.json and start-command resolution", () => {
     expect((err as TwinError).code).toBe("E_CONFIG_INVALID");
   });
 
+  // Regression: detection used to run before the safety preflight, so an
+  // unidentifiable project reported E_NO_STACK and the far more important
+  // "you're pointed at a real database" refusal never got a chance to fire.
+  it("refuses an unsafe environment before complaining that it can't identify the stack", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-order-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n", "utf8");
+    await writeFile(path.join(projectDir, ".env"), "DATABASE_URL=postgres://user:pass@db.supabase.co:5432/app\n", "utf8");
+
+    const err = await runCommand({ ...baseOptions, projectDir, scenarioPath, env: {} }, logger).catch((e: unknown) => e);
+
+    expect((err as TwinError).code).toBe("E_UNSAFE_ENV");
+  });
+
+  // Telling Twin exactly how to boot the app makes identifying the stack a
+  // nice-to-have: it falls back to generic tracer rules rather than refusing.
+  it("proceeds on an unidentifiable project when --start is given explicitly", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-generic-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n", "utf8");
+
+    const err = await runCommand(
+      { ...baseOptions, projectDir, scenarioPath, start: 'node -e "process.exit(1)"', bootTimeoutMs: 2000, env: {} },
+      logger
+    ).catch((e: unknown) => e);
+
+    // Got all the way to booting instead of refusing over the unknown stack.
+    expect((err as TwinError).code).toBe("E_BOOT_CRASH");
+  }, 20_000);
+
   it("rejects with E_NO_STACK when --start is omitted and there's no package.json to detect from", async () => {
     projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-config-run-"));
     const scenarioPath = path.join(projectDir, "scenario.yaml");
@@ -150,6 +180,31 @@ describe("runCommand twin.config.json and start-command resolution", () => {
 
     expect(TwinError.isTwinError(err)).toBe(true);
     expect((err as TwinError).code).toBe("E_NO_STACK");
+  });
+
+  // Regression: a relative --scenario was being joined onto --project, so the
+  // natural `twin run --project examples/app --scenario examples/app/x.yaml`
+  // looked for examples/app/examples/app/x.yaml.
+  it("resolves a relative --scenario against the cwd, not against --project", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-relpath-"));
+    const nested = path.join(projectDir, "nested");
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(nested, "scenario.yaml"), "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n", "utf8");
+
+    const previousCwd = process.cwd();
+    process.chdir(projectDir);
+    try {
+      const err = await runCommand(
+        // Relative to cwd (= projectDir here); joining onto projectDir would
+        // look for <projectDir>/nested/nested/scenario.yaml and fail to read.
+        { ...baseOptions, projectDir, scenarioPath: path.join("nested", "scenario.yaml"), env: {} },
+        logger
+      ).catch((e: unknown) => e);
+
+      expect(TwinError.isTwinError(err) && err.code).not.toBe("E_SCENARIO_INVALID");
+    } finally {
+      process.chdir(previousCwd);
+    }
   });
 
   it("resolves a relative scenario path from twin.config.json against projectDir, honouring an explicit --start override", async () => {

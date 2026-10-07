@@ -10,6 +10,8 @@ import type { DeploymentProfile } from "../../domain/deploymentProfile.js";
 import { TwinError } from "../../domain/errors.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
 import { scanForRemoteResources, scanForThirdPartyKeys } from "../../domain/safetyScan.js";
+import type { StackProfile } from "../../domain/stack.js";
+import { genericStack } from "../../domain/stacks/generic.js";
 import { computeVerdict } from "../../domain/verdict.js";
 import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
 import { loadTwinConfig } from "../../infra/config/loadTwinConfig.js";
@@ -17,7 +19,7 @@ import { HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
 import { HttpProxy } from "../../infra/proxy/httpProxy.js";
 import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
-import { detectStartCommand } from "../../infra/stack/detectStartCommand.js";
+import { detectStack } from "../../infra/stack/detectStack.js";
 import { FsWorkspaceManager } from "../../infra/workspace/fsWorkspaceManager.js";
 import type { Logger } from "../../ports/logger.js";
 import { computeExitCode } from "../../report/exitCode.js";
@@ -30,7 +32,9 @@ export interface RunOptions {
   projectDir: string;
   /** Falls back to twin.config.json's "scenario" when omitted. */
   scenarioPath?: string | undefined;
-  /** Falls back to twin.config.json's "start", then package.json-based auto-detection, when omitted. */
+  /** Forces the language stack instead of detecting it from marker files - needed for a polyglot repo. */
+  stack?: string | undefined;
+  /** Falls back to twin.config.json's "start", then the stack's own auto-detection, when omitted. */
   start?: string | undefined;
   /** Run once per instance workspace before `start`. Falls back to twin.config.json's "build". */
   build?: string | undefined;
@@ -71,7 +75,14 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
         hint: 'Pass --scenario <path>, or set "scenario" in twin.config.json (see `twin init`).'
       });
     }
-    const resolvedScenarioPath = path.isAbsolute(scenarioPath) ? scenarioPath : path.join(options.projectDir, scenarioPath);
+    // A path typed on the command line is relative to where it was typed, like
+    // in every other CLI. One from twin.config.json is relative to the project
+    // that config belongs to, which is the only sense it could mean.
+    const resolvedScenarioPath = path.isAbsolute(scenarioPath)
+      ? scenarioPath
+      : options.scenarioPath !== undefined
+        ? path.resolve(scenarioPath)
+        : path.join(options.projectDir, scenarioPath);
 
     let scenarioText: string;
     try {
@@ -92,7 +103,6 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     }
     const scenario = parsed.scenario;
 
-    const start = options.start ?? config?.start ?? (await detectStartCommand(options.projectDir));
     const build = options.build ?? config?.build;
     const healthPath = options.healthPath ?? config?.healthPath ?? DEFAULT_HEALTH_PATH;
     const portEnv = options.portEnv ?? config?.portEnv ?? DEFAULT_PORT_ENV;
@@ -126,6 +136,40 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       });
     }
 
+    // Identified after the safety preflight on purpose: refusing to run
+    // against a real database outranks every other complaint (I8).
+    // The stack decides which dependency dirs are shared rather than copied,
+    // what the tracer scans, and which static rules apply - so it's resolved
+    // even when --start was given.
+    const explicitStart = options.start ?? config?.start;
+    let stack: StackProfile;
+    let start: string | undefined;
+    try {
+      const detected = await detectStack(options.projectDir, options.stack ?? config?.stack);
+      stack = detected.profile;
+      start = explicitStart ?? detected.startCommand;
+    } catch (err) {
+      const unidentifiable =
+        TwinError.isTwinError(err) && (err.code === "E_NO_STACK" || err.code === "E_AMBIGUOUS_STACK");
+      // Being told exactly how to boot it makes identifying the stack a
+      // nice-to-have, not a prerequisite. A bad --stack still fails hard.
+      if (!unidentifiable || explicitStart === undefined) throw err;
+      stack = genericStack;
+      start = explicitStart;
+      logger.warn(`couldn't identify the stack - continuing with --start and every stack's tracer rules`);
+    }
+
+    if (start === undefined) {
+      throw new TwinError(
+        "E_NO_STACK",
+        `recognised "${options.projectDir}" as a ${stack.displayName} project, but couldn't tell how to start it`,
+        {
+          hint: 'Pass --start "<command>", or set "start" in twin.config.json. `{{port}}` in that command is replaced with the port Twin assigns.'
+        }
+      );
+    }
+    logger.info(`stack: ${stack.displayName}`, { start });
+
     const run = await store.createRun();
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));
     const instanceDriver = new ProcessInstanceDriver(
@@ -140,7 +184,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     logger.info("CONTROL: running the scenario against one instance alone");
     const control = await runControlPhase(
       scenario,
-      { sourceDir: options.projectDir, link: ["node_modules"], ignore: [], start: startSpec },
+      { sourceDir: options.projectDir, link: [...stack.linkDirs], ignore: [...stack.ignoreDirs], start: startSpec },
       instanceDriver,
       scenarioClient
     );
@@ -149,7 +193,13 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     const proxy = new HttpProxy();
     const split = await runSplitPhase(
       scenario,
-      { sourceDir: options.projectDir, link: ["node_modules"], ignore: [], start: startSpec, instanceIds: ["A", "B"] },
+      {
+        sourceDir: options.projectDir,
+        link: [...stack.linkDirs],
+        ignore: [...stack.ignoreDirs],
+        start: startSpec,
+        instanceIds: ["A", "B"]
+      },
       instanceDriver,
       proxy,
       scenarioClient
@@ -165,7 +215,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     });
 
     logger.info("TRACE: mapping any failing checks to likely code locations");
-    const findings = await traceFindings(evaluated, options.projectDir, split.workspaceDiffs);
+    const findings = await traceFindings(evaluated, options.projectDir, split.workspaceDiffs, stack);
     const verdict = computeVerdict(findings);
 
     const reportJson = buildReportJson({ scenarioName: scenario.name, profile: PROFILE, findings, verdict });

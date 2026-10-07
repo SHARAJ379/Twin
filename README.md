@@ -13,6 +13,9 @@ disk. Twin catches that class of bug before your users do: it boots **one** inst
 (the control), then boots **two** (A and B) behind its own proxy, runs the same
 scenario against both, and reports anywhere their behavior diverges.
 
+It tests over HTTP, so it doesn't care what your app is written in: **Node.js,
+Python, Go, Ruby and PHP** are all supported, detected automatically.
+
 ## Install
 
 ```bash
@@ -32,8 +35,8 @@ twin init    # scaffolds scenario.yaml + twin.config.json
 twin run     # boots your app, runs the scenario, reports what it finds
 ```
 
-`twin init` writes a **placeholder** starter scenario and tries to detect how to start
-your app from `package.json`. The placeholder hits `GET /health` - if your app has no
+`twin init` writes a **placeholder** starter scenario, works out which language stack
+the project is, and records how to start it. The placeholder hits `GET /health` - if your app has no
 such route, that step will fail and Twin will tell you so (exit `2`) rather than
 pretend everything is fine. Either point it at a route you do have, or go straight to
 the real thing: edit `scenario.yaml` to add steps that create state via one instance
@@ -72,6 +75,57 @@ Tag a `request` step with `check: <id>` to assert multi-instance behavior:
 A step that fails one of these gets a ready-to-paste fix prompt in the report, and
 Twin's tracer tries to point at the likely file/line in your source.
 
+## Language support
+
+Twin checks behavior over HTTP, so the engine is language-agnostic. What each
+stack contributes is how to *boot* it, which dependency directory to share
+between instances, and which source patterns to blame when a check fails.
+
+| stack | detected by | start command it guesses | shares |
+| --- | --- | --- | --- |
+| **Node.js** | `package.json` | `npm start` / `npm run dev` / `serve` | `node_modules` |
+| **Python** | `requirements.txt`, `pyproject.toml`, `Pipfile`, `manage.py` | Django `runserver`, `uvicorn`, `flask run`, or the script itself | `.venv` / `venv` |
+| **Go** | `go.mod` | `go run .` | *(nothing - compiled)* |
+| **Ruby** | `Gemfile`, `config.ru` | `rails server`, `rackup`, or `ruby <script>` | `vendor` |
+| **PHP** | `composer.json`, `artisan`, `index.php` | `artisan serve` or `php -S` | `vendor` |
+
+Python start commands use the project's **own virtualenv interpreter** when there
+is one, since that's where its dependencies live.
+
+### The `{{port}}` placeholder
+
+Node apps conventionally read `process.env.PORT`, but most other servers take the
+port as an argument — and `$PORT` / `%PORT%` aren't portable across shells. So any
+start command may contain `{{port}}`, which Twin replaces with the port it
+allocated for that instance:
+
+```json
+{ "start": "python -m uvicorn main:app --port {{port}}" }
+```
+
+`--port-env` still works for apps that read it from the environment instead.
+
+### Polyglot repos
+
+A repo matching more than one stack (say `package.json` *and* `requirements.txt`)
+is reported as `E_AMBIGUOUS_STACK` rather than guessed at. Say which one serves
+HTTP with `--stack python` or `"stack": "python"`. If Twin can't identify the
+stack at all but you pass `--start`, it proceeds and applies every stack's tracer
+rules.
+
+### How thoroughly each stack is tested
+
+Honest status, because it differs:
+
+- **Node.js and Python** are validated end-to-end against real running apps, in
+  both directions — Twin correctly fails a broken app *and* passes a correctly
+  built stateless one.
+- **Go, Ruby and PHP** ship with detection and tracer rules that are unit-tested
+  (every rule carries must-match and must-not-match fixtures, enforced in CI),
+  but they have not yet been run against a live app of that language. Detection
+  and the suspect patterns are tested; the boot path is not. Expect to need
+  `--start` on your first try, and please report what it got wrong.
+
 ## Configuration
 
 `twin run` resolves each setting in this order: **CLI flag > `twin.config.json` >
@@ -90,7 +144,8 @@ All fields are optional:
 | field           | meaning                                                      | default                              |
 | --------------- | -------------------------------------------------------------- | --------------------------------------- |
 | `scenario`      | path to the scenario file, relative to the project dir          | *(required from somewhere)*             |
-| `start`         | shell command that boots the app                               | auto-detected from `package.json`'s `scripts` |
+| `stack`         | `node` \| `python` \| `go` \| `ruby` \| `php`                     | detected from marker files               |
+| `start`         | shell command that boots the app (may contain `{{port}}`)        | the stack's own detection                |
 | `build`         | shell command run once per instance workspace before `start`    | *(skipped)*                             |
 | `healthPath`    | path polled for readiness                                       | `/health`                               |
 | `portEnv`       | env var name the app reads its port from                        | `PORT`                                  |
@@ -98,10 +153,10 @@ All fields are optional:
 | `env`           | extra env vars for every instance                                | `{}`                                    |
 | `allowRemote`   | allow running even if the environment looks like a real DB/service | `false`                             |
 
-Start-command auto-detection checks `package.json`'s `scripts` for `start`, then
-`dev`, then `serve`; if none of those exist but there's exactly one other script, it
-uses that. Otherwise it refuses (`E_NO_STACK` / `E_AMBIGUOUS_STACK`) rather than
-guess wrong - pass `--start` or set `"start"` in the config.
+On Node, start-command detection checks `package.json`'s `scripts` for `start`,
+then `dev`, then `serve`; if none exist but there's exactly one other script, it
+uses that. Every stack refuses (`E_NO_STACK`) rather than guess wrong when it
+can't tell - pass `--start` or set `"start"` in the config.
 
 ## CLI reference
 
@@ -113,7 +168,9 @@ against both, and writes a report.
 ```
 --scenario <path>       path to scenario.yaml (defaults to twin.config.json's "scenario")
 --project <dir>         project directory to run (default: cwd)
---start <command>       start command (defaults to config, then auto-detection)
+--stack <id>            node, python, go, ruby, php (default: detected from marker files)
+--start <command>       start command (defaults to config, then the stack's detection);
+                        `{{port}}` is replaced with the port Twin assigns
 --build <command>       build command to run once per instance workspace before --start
 --health-path <path>    path polled for readiness (default "/health")
 --port-env <name>       env var the app reads its port from (default "PORT")
@@ -195,7 +252,9 @@ outright. The common ones:
 | `scenario-ran-as-written` error | a step didn't match its own `expect:` | fix the route/status in `scenario.yaml` - the message names the step and what it got |
 | `No checks ran` | nothing in the scenario is tagged `check:` | tag the step that reads state back via the *other* instance |
 | `E_UNSAFE_ENV` | something in the environment looks like a real database | point it at a local one, or `--allow-remote` if you really mean it |
-| `E_NO_STACK` / `E_AMBIGUOUS_STACK` | Twin can't guess your start command | `--start "<command>"` |
+| `E_NO_STACK` | no marker file identifies the project, or the stack is known but its entrypoint isn't | `--start "<command>"` (and `--stack <id>` to get the right tracer rules) |
+| `E_AMBIGUOUS_STACK` | a polyglot repo matches two stacks | `--stack <id>` to say which one serves HTTP |
+| Python `ModuleNotFoundError` on boot | the start command used a `python` without the project's deps | let Twin detect it (it uses `.venv`), or point `--start` at the venv interpreter |
 
 ## How it works
 

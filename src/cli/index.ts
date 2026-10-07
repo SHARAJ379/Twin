@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { Command } from "commander";
 
 import { TwinError } from "../domain/errors.js";
+import { stackIds } from "../domain/stacks/index.js";
 import { ConsoleLogger } from "../infra/log/consoleLogger.js";
 import { cleanOrphans } from "./commands/clean.js";
 import { printDoctorReport, runDoctorChecks } from "./commands/doctor.js";
@@ -76,7 +77,11 @@ program
   .description("Boot two instances of your app and check they behave the same")
   .option("--scenario <path>", "path to scenario.yaml (defaults to twin.config.json's \"scenario\")")
   .option("--project <dir>", "project directory to run", process.cwd())
-  .option("--start <command>", 'start command (defaults to twin.config.json\'s "start", then auto-detection from package.json)')
+  .option("--stack <id>", `language stack: ${stackIds.join(", ")} (default: detected from marker files)`)
+  .option(
+    "--start <command>",
+    'start command (defaults to twin.config.json\'s "start", then the stack\'s own detection). `{{port}}` is replaced with the port Twin assigns'
+  )
   .option("--build <command>", "build command to run once per instance workspace before --start (e.g. for TypeScript/Next.js apps)")
   .option("--health-path <path>", 'path polled for readiness (default "/health")')
   .option("--port-env <name>", 'env var the app reads its port from (default "PORT")')
@@ -91,6 +96,7 @@ program
   .action(async (opts: {
     scenario?: string;
     project: string;
+    stack?: string;
     start?: string;
     build?: string;
     healthPath?: string;
@@ -105,6 +111,7 @@ program
         {
           projectDir: opts.project,
           scenarioPath: opts.scenario,
+          stack: opts.stack,
           start: opts.start,
           build: opts.build,
           healthPath: opts.healthPath,

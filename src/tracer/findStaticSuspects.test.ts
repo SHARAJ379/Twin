@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { nodeStack } from "../domain/stacks/node.js";
 import { findStaticSuspects } from "./findStaticSuspects.js";
 
 describe("findStaticSuspects", () => {
@@ -21,7 +22,7 @@ describe("findStaticSuspects", () => {
     const file = path.join(projectDir, "server.js");
     await writeFile(file, '// comment\nconst sessions = {};\napp.use(cookieParser());\n');
 
-    const suspects = await findStaticSuspects([file], projectDir);
+    const suspects = await findStaticSuspects([file], projectDir, nodeStack.rules);
 
     const moduleState = suspects.find((s) => s.kind === "module-state");
     expect(moduleState).toMatchObject({ file: "server.js", line: 2, confidence: "medium", source: "static" });
@@ -31,13 +32,13 @@ describe("findStaticSuspects", () => {
     const file = path.join(projectDir, "server.js");
     await writeFile(file, "function f() {\n  const sessions = {};\n}\n");
 
-    const suspects = await findStaticSuspects([file], projectDir);
+    const suspects = await findStaticSuspects([file], projectDir, nodeStack.rules);
     expect(suspects.filter((s) => s.kind === "module-state")).toEqual([]);
   });
 
   it("returns [] for a clean file with no matching patterns", async () => {
     const file = path.join(projectDir, "server.js");
     await writeFile(file, "app.get('/health', (req, res) => res.sendStatus(200));\n");
-    expect(await findStaticSuspects([file], projectDir)).toEqual([]);
+    expect(await findStaticSuspects([file], projectDir, nodeStack.rules)).toEqual([]);
   });
 });

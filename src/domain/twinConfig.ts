@@ -1,6 +1,8 @@
 /** Project-level defaults for `twin run` (§16, E_CONFIG_INVALID) - every field is overridable by its matching CLI flag. */
 export interface TwinConfig {
   scenario?: string;
+  /** Forces the language stack ("node" | "python" | "go" | "ruby" | "php") instead of detecting it. */
+  stack?: string;
   start?: string;
   build?: string;
   healthPath?: string;
@@ -18,7 +20,7 @@ export interface TwinConfigError {
 
 export type TwinConfigValidationResult = { ok: true; config: TwinConfig } | { ok: false; errors: TwinConfigError[] };
 
-const STRING_FIELDS = ["scenario", "start", "build", "healthPath", "portEnv"] as const;
+const STRING_FIELDS = ["scenario", "stack", "start", "build", "healthPath", "portEnv"] as const;
 const ALLOWED_KEYS = new Set<string>([...STRING_FIELDS, "bootTimeoutMs", "env", "allowRemote"]);
 
 /** No YAML/ajv here on purpose (cf. domain/jsonPath.ts) - a flat handful of fields doesn't earn the dependency. */

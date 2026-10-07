@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
 import type { TwinConfig } from "../../domain/twinConfig.js";
-import { detectStartCommand } from "../../infra/stack/detectStartCommand.js";
+import { detectStack } from "../../infra/stack/detectStack.js";
 import { TWIN_CONFIG_FILENAME } from "../../infra/config/loadTwinConfig.js";
 import type { Logger } from "../../ports/logger.js";
 
@@ -68,15 +68,28 @@ export async function initCommand(options: InitOptions, logger: Logger): Promise
   const wroteScenario = await writeIfAbsent(scenarioPath, SCAFFOLD_SCENARIO, options.force, logger, "scenario file");
   if (wroteScenario) logger.info("wrote scenario", { path: scenarioPath });
 
+  // Both are best-effort: a scaffold is still useful on a project Twin can't
+  // identify, as long as it says so clearly instead of writing a wrong guess.
+  let stack: string | undefined;
   let start: string | undefined;
   try {
-    start = await detectStartCommand(options.projectDir);
+    const detected = await detectStack(options.projectDir);
+    stack = detected.profile.id;
+    start = detected.startCommand;
+    logger.info(`detected a ${detected.profile.displayName} project`);
+    if (start === undefined) {
+      logger.warn(`couldn't tell how to start it - add a "start" command to ${TWIN_CONFIG_FILENAME}`);
+    }
   } catch (err) {
     if (!TwinError.isTwinError(err)) throw err;
-    logger.warn(`couldn't auto-detect a start command (${err.message}) - you'll need to pass --start or edit ${TWIN_CONFIG_FILENAME}`);
+    logger.warn(`couldn't identify the stack (${err.message}) - set "stack" and "start" in ${TWIN_CONFIG_FILENAME}`);
   }
 
-  const config: TwinConfig = { scenario: scenarioRelPath, ...(start !== undefined ? { start } : {}) };
+  const config: TwinConfig = {
+    scenario: scenarioRelPath,
+    ...(stack !== undefined ? { stack } : {}),
+    ...(start !== undefined ? { start } : {})
+  };
   const configPath = path.join(options.projectDir, TWIN_CONFIG_FILENAME);
   const wroteConfig = await writeIfAbsent(configPath, `${JSON.stringify(config, null, 2)}\n`, options.force, logger, TWIN_CONFIG_FILENAME);
   if (wroteConfig) logger.info(`wrote ${TWIN_CONFIG_FILENAME}`, { path: configPath, ...config });

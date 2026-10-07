@@ -2,8 +2,12 @@
 // apps very often have a live Supabase/Neon/Mongo URL sitting in .env.
 // Twin must refuse to run test traffic against it by default.
 
+// Anchored to a database/service keyword, not just a "_URL"/"_URI" suffix:
+// CI runners (GitHub Actions among them) set plenty of ambient *_URL vars of
+// their own (GITHUB_API_URL, GITHUB_SERVER_URL, ...) that have nothing to do
+// with a database and would otherwise false-positive on every CI run.
 const SUSPICIOUS_KEY_PATTERN =
-  /(_URL|_URI|_DSN|_CONNECTION_STRING)$|^(DATABASE|MONGO|REDIS|SUPABASE|POSTGRES|POSTGRESQL|MYSQL|PLANETSCALE|NEON|COCKROACH)/i;
+  /(^|_)(DATABASE|DB|MONGO|MONGODB|REDIS|SUPABASE|POSTGRES|POSTGRESQL|MYSQL|SQLITE|PLANETSCALE|NEON|COCKROACH|COCKROACHDB|DYNAMODB|FIRESTORE|DSN|CONNECTION_STRING)(_|$)/i;
 
 const THIRD_PARTY_KEY_PATTERN = /^(STRIPE|SENDGRID|TWILIO|OPENAI|ANTHROPIC|MAILGUN|POSTMARK|SMTP|AWS_SES)/i;
 

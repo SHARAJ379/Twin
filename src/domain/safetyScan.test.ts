@@ -40,6 +40,23 @@ describe("scanForRemoteResources", () => {
     });
     expect(found).toHaveLength(2);
   });
+
+  it("does not flag GitHub Actions' own ambient *_URL vars (regression: broke every CI run)", () => {
+    const found = scanForRemoteResources({
+      GITHUB_API_URL: "https://api.github.com",
+      GITHUB_SERVER_URL: "https://github.com",
+      GITHUB_GRAPHQL_URL: "https://api.github.com/graphql"
+    });
+    expect(found).toEqual([]);
+  });
+
+  it("still flags a bare DB_URL/DSN without a named provider", () => {
+    const found = scanForRemoteResources({
+      DB_URL: "postgres://host.example.com/app",
+      APP_DSN: "sentry://host.example.com/1"
+    });
+    expect(found).toHaveLength(2);
+  });
 });
 
 describe("scanForThirdPartyKeys", () => {

@@ -1,0 +1,191 @@
+# Twin
+
+Runs two copies of your app and shows you where they disagree.
+
+Most apps get built and tested as a single instance. The moment you run two (behind a
+load balancer, in two containers, across a deploy) you find out the hard way that a
+session only lived in one process's memory, or a file only landed on one instance's
+disk. Twin catches that class of bug before your users do: it boots **one** instance
+(the control), then boots **two** (A and B) behind its own proxy, runs the same
+scenario against both, and reports anywhere their behavior diverges.
+
+## Install
+
+```bash
+npm install
+npm run build
+npm link   # makes `twin` available on your PATH, or run via `node dist/cli/index.js`
+```
+
+Requires Node.js >= 20. Run `twin doctor` to check your machine can run it.
+
+## Quickstart
+
+From your project's root:
+
+```bash
+twin init    # scaffolds scenario.yaml + twin.config.json
+twin run     # boots your app, runs the scenario, reports what it finds
+```
+
+`twin init` writes a no-op starter scenario (just a health check) and tries to detect
+how to start your app from `package.json`. Edit `scenario.yaml` to add steps that
+create state via one instance and read it back via the other - that's what actually
+exercises multi-instance bugs:
+
+```yaml
+name: basic-user-flow
+version: 1
+steps:
+  - id: login
+    kind: request
+    via: A
+    request: { method: POST, path: /login, json: { email: "a@test.com", password: "pw" } }
+    expect: { status: 200 }
+  - id: me-check
+    kind: request
+    via: B
+    request: { method: GET, path: /me }
+    expect: { status: 200 }
+    check: session-survives-switch
+```
+
+Full step/check reference: [docs/scenario.schema.json](docs/scenario.schema.json).
+
+### Built-in checks
+
+Tag a `request` step with `check: <id>` to assert multi-instance behavior:
+
+| check                    | what it proves                                                              |
+| ------------------------- | ----------------------------------------------------------------------------- |
+| `session-survives-switch` | a session started on one instance is still valid on the other                 |
+| `data-consistency`        | a record created via one instance can be read back via the other             |
+| `file-consistency`        | a file uploaded via one instance can be fetched back via the other           |
+| `restart-persistence`     | a record survives a restart of the instance that created it                  |
+
+A step that fails one of these gets a ready-to-paste fix prompt in the report, and
+Twin's tracer tries to point at the likely file/line in your source.
+
+## Configuration
+
+`twin run` resolves each setting in this order: **CLI flag > `twin.config.json` >
+built-in default / auto-detection**. `twin init` writes `twin.config.json` for you so
+a bare `twin run` just works afterward:
+
+```json
+{
+  "scenario": "scenario.yaml",
+  "start": "npm start"
+}
+```
+
+All fields are optional:
+
+| field           | meaning                                                      | default                              |
+| --------------- | -------------------------------------------------------------- | --------------------------------------- |
+| `scenario`      | path to the scenario file, relative to the project dir          | *(required from somewhere)*             |
+| `start`         | shell command that boots the app                               | auto-detected from `package.json`'s `scripts` |
+| `build`         | shell command run once per instance workspace before `start`    | *(skipped)*                             |
+| `healthPath`    | path polled for readiness                                       | `/health`                               |
+| `portEnv`       | env var name the app reads its port from                        | `PORT`                                  |
+| `bootTimeoutMs` | boot timeout per instance, in ms                                 | `60000`                                 |
+| `env`           | extra env vars for every instance                                | `{}`                                    |
+| `allowRemote`   | allow running even if the environment looks like a real DB/service | `false`                             |
+
+Start-command auto-detection checks `package.json`'s `scripts` for `start`, then
+`dev`, then `serve`; if none of those exist but there's exactly one other script, it
+uses that. Otherwise it refuses (`E_NO_STACK` / `E_AMBIGUOUS_STACK`) rather than
+guess wrong - pass `--start` or set `"start"` in the config.
+
+## CLI reference
+
+### `twin run`
+
+Boots one instance (CONTROL), then two behind the proxy (SPLIT), runs the scenario
+against both, and writes a report.
+
+```
+--scenario <path>       path to scenario.yaml (defaults to twin.config.json's "scenario")
+--project <dir>         project directory to run (default: cwd)
+--start <command>       start command (defaults to config, then auto-detection)
+--build <command>       build command to run once per instance workspace before --start
+--health-path <path>    path polled for readiness (default "/health")
+--port-env <name>       env var the app reads its port from (default "PORT")
+--boot-timeout-ms <ms>  boot timeout per instance (default 60000)
+--env <KEY=VALUE>       extra env var for every instance (repeatable)
+--keep-workspaces       don't delete the per-instance tmp workspaces on exit
+--allow-remote          allow running even if the environment looks like a non-local DB/service
+```
+
+### `twin report`
+
+Re-prints a past run's report (from `.twin/runs/<id>/`) without re-running anything -
+useful in CI, or to look at a result again after the terminal's scrolled away.
+
+```
+--project <dir>    project directory the run happened in (default: cwd)
+--run <id>         a specific run id (defaults to the most recent run)
+--format <format>  terminal, json, or markdown (default: terminal)
+```
+
+### `twin init`
+
+Scaffolds a starter `scenario.yaml` and `twin.config.json`. Never overwrites an
+existing file unless `--force` is passed.
+
+```
+--project <dir>    project directory to scaffold into (default: cwd)
+--scenario <path>  where to write the starter scenario (default: scenario.yaml)
+--force            overwrite an existing scenario.yaml / twin.config.json
+```
+
+### `twin doctor`
+
+Checks that your machine can run Twin (Node version, platform, git).
+
+### `twin clean`
+
+Kills any orphaned instance processes left behind by a past run that didn't get
+torn down cleanly (crash, Ctrl-C mid-run, etc).
+
+## Exit codes
+
+| code | meaning                                                             |
+| ---- | ---------------------------------------------------------------------- |
+| `0`  | every check passed - safe to run more than one instance                |
+| `1`  | at least one check failed - a real multi-instance bug was found        |
+| `2`  | Twin itself couldn't tell (bad scenario, boot failure, Twin's own error) |
+
+## Use in CI
+
+See [action.yml](action.yml) for a GitHub Action that runs `twin run` against your
+checked-out repo and exposes the report as a step output:
+
+```yaml
+- uses: actions/checkout@v4
+- uses: SHARAJ379/twin@master
+  with:
+    project-dir: .
+```
+
+## How it works
+
+1. **PREFLIGHT** - validates the scenario, scans the environment for anything that
+   looks like a real (non-local) database or third-party service, and refuses to run
+   against one unless you pass `--allow-remote` (Twin writes real test data).
+2. **CONTROL** - boots one throwaway instance and runs the whole scenario against it
+   alone, proving the scenario/app works before a SPLIT failure gets blamed on
+   multi-instance behavior.
+3. **SPLIT** - boots two instances (A, B) behind Twin's own HTTP proxy and runs the
+   same scenario against them, pinning specific steps to a specific instance via
+   `via: A` / `via: B`.
+4. **EVALUATE** - runs the built-in checks against both runs' results.
+5. **TRACE** - for anything that failed, scans your source for the likely cause
+   (static rules first, then matched against the actual filesystem diff between each
+   instance's workspace before/after).
+6. **REPORT** - writes `report.json` / `report.md` to `.twin/runs/<id>/`, prints a
+   terminal summary with a ready-to-paste fix prompt per failure, and exits 0/1/2.
+
+Every run is **ephemeral**: Twin clones your project into temp workspaces per
+instance (symlinking `node_modules`), runs there, and tears everything down
+afterward. It never touches your actual source tree.

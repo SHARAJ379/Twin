@@ -20,6 +20,10 @@ export interface ArtifactStore {
   pathFor(run: RunHandle, name: string): string;
   /** Updates `.twin/latest` to point at this run. */
   writeLatestPointer(run: RunHandle): Promise<void>;
+  /** Reads `.twin/latest`. Returns undefined if no run has ever completed. */
+  readLatestRunId(): Promise<string | undefined>;
+  /** Builds a handle for an existing run by id, without touching the filesystem. */
+  getRun(id: string): RunHandle;
   /**
    * Acquires the single-run lock (`.twin/lock`). Throws TwinError("E_LOCKED")
    * if another live process holds it; a lock left behind by a dead PID is

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createConnection } from "node:net";
 
 import { TwinError } from "../../domain/errors.js";
 import type { FsSnapshot } from "../../domain/workspaceDiff.js";
@@ -41,6 +42,53 @@ async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Runs `build` to completion in `dir` before the app is started. Rejects with TwinError("E_BUILD_FAILED") on a non-zero exit. */
+async function runBuild(dir: string, build: string | undefined, instance: string): Promise<void> {
+  if (build === undefined) return;
+
+  const logs = new LogRingBuffer();
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(build, { cwd: dir, shell: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout?.on("data", (chunk: Buffer) => logs.write(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => logs.write(chunk));
+    child.once("error", (err) => {
+      reject(
+        new TwinError("E_BUILD_FAILED", `Failed to run build command \`${build}\` for instance ${instance}.`, {
+          details: { instance },
+          cause: err
+        })
+      );
+    });
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new TwinError(
+          "E_BUILD_FAILED",
+          `Build command \`${build}\` failed for instance ${instance} (exit code ${code ?? "null"}, signal ${signal ?? "null"}).`,
+          { hint: "Run the build command manually to see the full error.", details: { instance, logTail: logs.lines(30) } }
+        )
+      );
+    });
+  });
+}
+
+/** True if something (anything) accepts a TCP connection on `port` right now. */
+async function isPortHeldBySomeoneElse(port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const socket = createConnection({ port, host: "127.0.0.1" });
+    const settle = (held: boolean): void => {
+      socket.destroy();
+      resolve(held);
+    };
+    socket.once("connect", () => settle(true));
+    socket.once("error", () => settle(false));
+    socket.setTimeout(500, () => settle(false));
+  });
+}
+
 async function pollHealth(baseUrl: string, healthPath: string, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
@@ -79,6 +127,8 @@ export class ProcessInstanceDriver implements InstanceDriver {
   }
 
   async start(ws: PreparedWorkspace, spec: StartSpec): Promise<InstanceHandle> {
+    await runBuild(ws.dir, spec.build, ws.instance);
+
     let lastErr: unknown;
     for (let attempt = 1; attempt <= MAX_BOOT_ATTEMPTS; attempt++) {
       try {
@@ -112,6 +162,8 @@ export class ProcessInstanceDriver implements InstanceDriver {
 
     const dir =
       opts.disk === "fresh" ? await this.workspaceManager.cloneForInstance(prepared.pristineDir, handle.id) : prior.dir;
+    // A fresh clone needs its own build output; "keep" reuses prior.dir, which was already built by start().
+    if (opts.disk === "fresh") await runBuild(dir, prior.startSpec.build, handle.id);
 
     return this.spawnOnce({ instance: handle.id, dir }, prior.startSpec);
   }
@@ -170,6 +222,25 @@ export class ProcessInstanceDriver implements InstanceDriver {
       // so reading it right now would be a race.
       const alreadyDead = !isProcessAlive(pid);
       if (!alreadyDead) await killTree(pid, { mode: "crash", graceMs: 0 });
+
+      // getFreePort() frees the port immediately after checking it, so
+      // another process can grab it before this child binds it (rare, but
+      // real: §9.3). If our child is dead yet something still answers on
+      // its port, that something isn't us - a reliable, OS-level signal
+      // that doesn't depend on scraping the child's stdio for "EADDRINUSE"
+      // (which Windows doesn't deliver here once `detached: true` is set).
+      if (alreadyDead && (await isPortHeldBySomeoneElse(port))) {
+        throw new TwinError(
+          "E_PORT_UNAVAILABLE",
+          `Instance ${ws.instance} could not bind its assigned port ${port} - something else grabbed it first.`,
+          {
+            hint: "Re-run `twin run` - this is a rare timing race (Twin frees the port right before handing it to your app) and should succeed on retry.",
+            details: { instance: ws.instance, port, logTail: logs.lines(30) },
+            cause: err
+          }
+        );
+      }
+
       throw new TwinError(
         alreadyDead ? "E_BOOT_CRASH" : "E_BOOT_TIMEOUT",
         alreadyDead

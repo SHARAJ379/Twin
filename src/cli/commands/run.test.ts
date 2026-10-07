@@ -108,3 +108,66 @@ describe("runCommand PREFLIGHT failures", () => {
     expect(TwinError.isTwinError(err) && err.code).not.toBe("E_UNSAFE_ENV");
   }, 20_000);
 });
+
+describe("runCommand twin.config.json and start-command resolution", () => {
+  let projectDir: string;
+
+  afterEach(async () => {
+    if (projectDir !== undefined) await rm(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  const baseOptions: Omit<RunOptions, "projectDir" | "env"> = {
+    keepWorkspaces: false,
+    allowRemote: false
+  };
+
+  it("rejects with E_SCENARIO_INVALID when neither --scenario nor twin.config.json gives one", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-config-run-"));
+
+    const err = await runCommand({ ...baseOptions, projectDir, env: {} }, logger).catch((e: unknown) => e);
+
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_SCENARIO_INVALID");
+    expect((err as TwinError).message).toContain("no scenario given");
+  });
+
+  it("rejects with E_CONFIG_INVALID for a malformed twin.config.json, before touching the scenario", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-config-run-"));
+    await writeFile(path.join(projectDir, "twin.config.json"), "{ not json", "utf8");
+
+    const err = await runCommand({ ...baseOptions, projectDir, env: {} }, logger).catch((e: unknown) => e);
+
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_CONFIG_INVALID");
+  });
+
+  it("rejects with E_NO_STACK when --start is omitted and there's no package.json to detect from", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-config-run-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n", "utf8");
+
+    const err = await runCommand({ ...baseOptions, projectDir, scenarioPath, env: {} }, logger).catch((e: unknown) => e);
+
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_NO_STACK");
+  });
+
+  it("resolves a relative scenario path from twin.config.json against projectDir, honouring an explicit --start override", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-config-run-"));
+    await writeFile(
+      path.join(projectDir, "scenario.yaml"),
+      "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n",
+      "utf8"
+    );
+    await writeFile(path.join(projectDir, "twin.config.json"), JSON.stringify({ scenario: "scenario.yaml" }), "utf8");
+
+    // No package.json either, so without the config's scenario path this would fail E_SCENARIO_INVALID/E_NO_STACK instead.
+    const err = await runCommand(
+      { ...baseOptions, projectDir, start: 'node -e "process.exit(1)"', bootTimeoutMs: 2000, env: {} },
+      logger
+    ).catch((e: unknown) => e);
+
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_BOOT_CRASH"); // proves scenario+start resolution succeeded; this is just the deliberate crash
+  }, 20_000);
+});

@@ -15,6 +15,7 @@ export type TwinErrorCode =
   | "E_PROXY"
   | "E_TEARDOWN_PARTIAL"
   | "E_LOCKED"
+  | "E_NO_REPORT"
   | "E_INTERNAL";
 
 export interface TwinErrorOptions {

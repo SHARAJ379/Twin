@@ -12,10 +12,12 @@ import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenari
 import { scanForRemoteResources, scanForThirdPartyKeys } from "../../domain/safetyScan.js";
 import { computeVerdict } from "../../domain/verdict.js";
 import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
+import { loadTwinConfig } from "../../infra/config/loadTwinConfig.js";
 import { HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
 import { HttpProxy } from "../../infra/proxy/httpProxy.js";
 import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
+import { detectStartCommand } from "../../infra/stack/detectStartCommand.js";
 import { FsWorkspaceManager } from "../../infra/workspace/fsWorkspaceManager.js";
 import type { Logger } from "../../ports/logger.js";
 import { computeExitCode } from "../../report/exitCode.js";
@@ -26,11 +28,15 @@ import { traceFindings } from "../../tracer/traceFindings.js";
 
 export interface RunOptions {
   projectDir: string;
-  scenarioPath: string;
-  start: string;
-  healthPath: string;
-  portEnv: string;
-  bootTimeoutMs: number;
+  /** Falls back to twin.config.json's "scenario" when omitted. */
+  scenarioPath?: string | undefined;
+  /** Falls back to twin.config.json's "start", then package.json-based auto-detection, when omitted. */
+  start?: string | undefined;
+  /** Run once per instance workspace before `start`. Falls back to twin.config.json's "build". */
+  build?: string | undefined;
+  healthPath?: string | undefined;
+  portEnv?: string | undefined;
+  bootTimeoutMs?: number | undefined;
   env: Record<string, string>;
   keepWorkspaces: boolean;
   /** Bypasses the non-local-database refusal (§9.1, I8). Off by default - this is the single most important safety rule. */
@@ -38,6 +44,9 @@ export interface RunOptions {
 }
 
 const PROFILE: DeploymentProfile = "ephemeral";
+const DEFAULT_HEALTH_PATH = "/health";
+const DEFAULT_PORT_ENV = "PORT";
+const DEFAULT_BOOT_TIMEOUT_MS = 60_000;
 
 function formatScenarioErrors(errors: ScenarioParseError[]): string {
   return errors
@@ -54,11 +63,21 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
   const lock = await store.acquireLock();
 
   try {
+    const config = await loadTwinConfig(options.projectDir);
+
+    const scenarioPath = options.scenarioPath ?? config?.scenario;
+    if (scenarioPath === undefined) {
+      throw new TwinError("E_SCENARIO_INVALID", "no scenario given", {
+        hint: 'Pass --scenario <path>, or set "scenario" in twin.config.json (see `twin init`).'
+      });
+    }
+    const resolvedScenarioPath = path.isAbsolute(scenarioPath) ? scenarioPath : path.join(options.projectDir, scenarioPath);
+
     let scenarioText: string;
     try {
-      scenarioText = await readFile(options.scenarioPath, "utf8");
+      scenarioText = await readFile(resolvedScenarioPath, "utf8");
     } catch (err) {
-      throw new TwinError("E_SCENARIO_INVALID", `could not read scenario file "${options.scenarioPath}"`, {
+      throw new TwinError("E_SCENARIO_INVALID", `could not read scenario file "${resolvedScenarioPath}"`, {
         hint: "Check the --scenario path.",
         cause: err
       });
@@ -73,14 +92,22 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     }
     const scenario = parsed.scenario;
 
+    const start = options.start ?? config?.start ?? (await detectStartCommand(options.projectDir));
+    const build = options.build ?? config?.build;
+    const healthPath = options.healthPath ?? config?.healthPath ?? DEFAULT_HEALTH_PATH;
+    const portEnv = options.portEnv ?? config?.portEnv ?? DEFAULT_PORT_ENV;
+    const bootTimeoutMs = options.bootTimeoutMs ?? config?.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
+    const env = { ...config?.env, ...options.env };
+    const allowRemote = options.allowRemote || config?.allowRemote === true;
+
     // Safety preflight (§9.1/§9.2, I8): scan every env source that would end
     // up inherited by a spawned instance - .env* files, Twin's own process
-    // env (instances inherit it), and --env overrides.
+    // env (instances inherit it), twin.config.json's "env", and --env overrides.
     const dotEnvVars = await loadDotEnvFiles(options.projectDir);
-    const mergedEnv = { ...dotEnvVars, ...process.env, ...options.env } as Record<string, string>;
+    const mergedEnv = { ...dotEnvVars, ...process.env, ...env } as Record<string, string>;
 
     const remoteRefs = scanForRemoteResources(mergedEnv);
-    if (remoteRefs.length > 0 && !options.allowRemote) {
+    if (remoteRefs.length > 0 && !allowRemote) {
       const list = remoteRefs.map((r) => `  ${r.key} -> ${r.host}`).join("\n");
       throw new TwinError(
         "E_UNSAFE_ENV",
@@ -103,13 +130,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));
     const instanceDriver = new ProcessInstanceDriver(workspaceManager, logger, store.pathFor(run, "pids.json"));
     const scenarioClient = new HttpScenarioClient();
-    const startSpec = {
-      command: options.start,
-      portEnv: options.portEnv,
-      env: options.env,
-      healthPath: options.healthPath,
-      bootTimeoutMs: options.bootTimeoutMs
-    };
+    const startSpec = { command: start, build, portEnv, env, healthPath, bootTimeoutMs };
 
     logger.info("CONTROL: running the scenario against one instance alone");
     const control = await runControlPhase(

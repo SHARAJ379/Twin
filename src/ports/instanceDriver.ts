@@ -19,6 +19,8 @@ export interface PreparedWorkspace {
 export interface StartSpec {
   /** Shell command to run, e.g. "npm start". */
   command: string;
+  /** Run once in the instance's workspace before `command`, e.g. "npm run build". Skipped when undefined. */
+  build?: string | undefined;
   /** Env var the app reads its port from (default "PORT"). */
   portEnv: string;
   /** Extra env vars, merged over process.env. Values are never logged (I5). */

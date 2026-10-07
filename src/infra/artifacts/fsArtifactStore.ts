@@ -44,6 +44,18 @@ export class FsArtifactStore implements ArtifactStore {
     await writeFile(path.join(this.root, "latest"), run.id, "utf8");
   }
 
+  async readLatestRunId(): Promise<string | undefined> {
+    try {
+      return (await readFile(path.join(this.root, "latest"), "utf8")).trim();
+    } catch {
+      return undefined;
+    }
+  }
+
+  getRun(id: string): RunHandle {
+    return { id, dir: path.join(this.root, "runs", id) };
+  }
+
   async acquireLock(): Promise<Lock> {
     await mkdir(this.root, { recursive: true });
     const lockPath = path.join(this.root, "lock");

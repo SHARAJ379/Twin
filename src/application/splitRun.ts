@@ -1,4 +1,5 @@
 import type { Scenario } from "../domain/scenario.js";
+import { TwinError } from "../domain/errors.js";
 import type { StepResult } from "../domain/stepResult.js";
 import { diffSnapshots, type WorkspaceDiff } from "../domain/workspaceDiff.js";
 import type { InstanceDriver, InstanceHandle, StartSpec } from "../ports/instanceDriver.js";
@@ -41,6 +42,8 @@ export async function runSplitPhase(
   const before = await Promise.all(instances.map((h) => instanceDriver.snapshot(h)));
 
   const started = await proxy.start(() => instances);
+  let result: SplitRunResult | undefined;
+  let primaryError: unknown;
   try {
     const results = await scenarioClient.run(scenario, { proxyUrl: started.url, instanceDriver, instances });
 
@@ -49,12 +52,36 @@ export async function runSplitPhase(
     // currently running under each original id, not the original handles.
     const after = await Promise.all(instances.map((h) => instanceDriver.snapshot(h)));
     const workspaceDiffs = before.map((b, i) => diffSnapshots(b, after[i]!));
-
-    return { results, workspaceDiffs };
-  } finally {
-    await proxy.stop();
-    for (const handle of instances) {
-      await instanceDriver.stop(handle, { graceMs: 5000 });
-    }
+    result = { results, workspaceDiffs };
+  } catch (err) {
+    primaryError = err;
   }
+
+  // Best-effort: the proxy has no "instance" to report as leaked, and a
+  // failure here must not mask the scenario's own result either.
+  await proxy.stop().catch(() => undefined);
+  // allSettled, not a sequential loop: one instance's stop() throwing must
+  // never skip tearing down the rest (that would leak a live process).
+  const teardowns = await Promise.allSettled(instances.map((handle) => instanceDriver.stop(handle, { graceMs: 5000 })));
+  const failed = teardowns
+    .map((outcome, i) => ({ outcome, instance: instances[i]! }))
+    .filter((x): x is { outcome: PromiseRejectedResult; instance: InstanceHandle } => x.outcome.status === "rejected");
+
+  // The scenario's own result always wins - a messy teardown doesn't change
+  // whether the app passed, and must never hide why it failed.
+  if (primaryError !== undefined) throw primaryError;
+
+  if (failed.length > 0) {
+    throw new TwinError(
+      "E_TEARDOWN_PARTIAL",
+      `${failed.length} of ${instances.length} instance(s) failed to shut down cleanly: ${failed.map((f) => f.instance.id).join(", ")}.`,
+      {
+        hint: "Run `twin clean` to reap any leftover processes.",
+        details: { failedInstances: failed.map((f) => f.instance.id) },
+        cause: failed[0]!.outcome.reason
+      }
+    );
+  }
+
+  return result!;
 }

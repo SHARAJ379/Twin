@@ -1,0 +1,88 @@
+name: "Twin"
+description: "Runs two copies of your app and shows you where they disagree."
+author: "Sharaj R Shetty"
+branding:
+  icon: "copy"
+  color: "purple"
+
+inputs:
+  project-dir:
+    description: 'Directory of the project to test, relative to the workflow''s working directory. Defaults to "." (the checked-out repo root).'
+    required: false
+    default: "."
+  scenario:
+    description: 'Path to scenario.yaml. Defaults to twin.config.json''s "scenario" in project-dir.'
+    required: false
+  start:
+    description: 'Start command. Defaults to twin.config.json''s "start", then auto-detection from package.json.'
+    required: false
+  build:
+    description: "Build command to run once per instance workspace before start."
+    required: false
+  health-path:
+    description: "Path polled for readiness."
+    required: false
+  port-env:
+    description: "Env var name the app reads its port from."
+    required: false
+  boot-timeout-ms:
+    description: "Boot timeout per instance, in ms."
+    required: false
+  allow-remote:
+    description: "Allow running even if the environment looks like it points at a non-local database/service."
+    required: false
+    default: "false"
+  fail-on-finding:
+    description: "Fail the job when Twin finds a real multi-instance bug (exit code 1), not just when Twin itself errors (exit code 2)."
+    required: false
+    default: "true"
+
+outputs:
+  exit-code:
+    description: "Twin's own exit code: 0 safe, 1 found a bug, 2 Twin itself errored."
+    value: ${{ steps.run.outputs.exit-code }}
+  report-dir:
+    description: "Path to the run's .twin/runs/<id> artifact directory (report.json, report.md), relative to project-dir."
+    value: ${{ steps.run.outputs.report-dir }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Build Twin
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci
+        npm run build
+
+    - name: Run Twin
+      id: run
+      shell: bash
+      run: |
+        set +e
+        ARGS=(run --project "${{ inputs.project-dir }}")
+        [ -n "${{ inputs.scenario }}" ] && ARGS+=(--scenario "${{ inputs.scenario }}")
+        [ -n "${{ inputs.start }}" ] && ARGS+=(--start "${{ inputs.start }}")
+        [ -n "${{ inputs.build }}" ] && ARGS+=(--build "${{ inputs.build }}")
+        [ -n "${{ inputs.health-path }}" ] && ARGS+=(--health-path "${{ inputs.health-path }}")
+        [ -n "${{ inputs.port-env }}" ] && ARGS+=(--port-env "${{ inputs.port-env }}")
+        [ -n "${{ inputs.boot-timeout-ms }}" ] && ARGS+=(--boot-timeout-ms "${{ inputs.boot-timeout-ms }}")
+        [ "${{ inputs.allow-remote }}" = "true" ] && ARGS+=(--allow-remote)
+
+        node "${{ github.action_path }}/dist/cli/index.js" "${ARGS[@]}"
+        code=$?
+
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        latest_file="${{ inputs.project-dir }}/.twin/latest"
+        if [ -f "$latest_file" ]; then
+          echo "report-dir=${{ inputs.project-dir }}/.twin/runs/$(cat "$latest_file")" >> "$GITHUB_OUTPUT"
+        fi
+
+        if [ "$code" = "2" ]; then exit 2; fi
+        if [ "${{ inputs.fail-on-finding }}" = "true" ] && [ "$code" = "1" ]; then exit 1; fi
+        exit 0

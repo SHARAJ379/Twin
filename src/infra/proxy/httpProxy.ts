@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter, on } from "node:events";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 
+import { TwinError } from "../../domain/errors.js";
 import type { InstanceHandle } from "../../ports/instanceDriver.js";
 import type { Proxy, ProxyEvent } from "../../ports/proxy.js";
 import { getFreePort } from "../process/portAllocator.js";
@@ -74,7 +75,27 @@ export class HttpProxy implements Proxy {
       socket.destroy();
     });
 
-    await new Promise<void>((resolve) => this.server?.listen(port, "127.0.0.1", resolve));
+    const server = this.server;
+    await new Promise<void>((resolve, reject) => {
+      const onError = (err: NodeJS.ErrnoException): void => {
+        server.off("listening", onListening);
+        reject(
+          err.code === "EADDRINUSE"
+            ? new TwinError("E_PORT_UNAVAILABLE", `Twin's proxy could not bind port ${port} - something else grabbed it first.`, {
+                hint: "Re-run `twin run` - this is a rare timing race (Twin frees the port right before binding it) and should succeed on retry.",
+                cause: err
+              })
+            : err
+        );
+      };
+      const onListening = (): void => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, "127.0.0.1");
+    });
     return { url: `http://127.0.0.1:${port}` };
   }
 

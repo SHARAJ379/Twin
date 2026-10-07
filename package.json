@@ -3,6 +3,17 @@
   "version": "0.0.1",
   "private": true,
   "description": "Runs two copies of your app and shows you where they disagree.",
+  "keywords": ["testing", "multi-instance", "differential-testing", "cli", "regression-testing"],
+  "license": "MIT",
+  "author": "Sharaj R Shetty",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SHARAJ379/twin.git"
+  },
+  "homepage": "https://github.com/SHARAJ379/twin#readme",
+  "bugs": {
+    "url": "https://github.com/SHARAJ379/twin/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=20"

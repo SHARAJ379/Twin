@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TwinError } from "../../domain/errors.js";
 import { diffSnapshots } from "../../domain/workspaceDiff.js";
@@ -11,6 +12,7 @@ import type { StartSpec, WorkspaceSpec } from "../../ports/instanceDriver.js";
 import { ConsoleLogger } from "../log/consoleLogger.js";
 import { FsWorkspaceManager } from "../workspace/fsWorkspaceManager.js";
 import { isProcessAlive } from "./isProcessAlive.js";
+import * as portAllocator from "./portAllocator.js";
 import { ProcessInstanceDriver } from "./processInstanceDriver.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -115,5 +117,61 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
   it("snapshot() for an instance that was never started returns an empty snapshot, not a throw", async () => {
     const snap = await driver.snapshot({ id: "ghost", baseUrl: "http://127.0.0.1:1", state: "down" });
     expect(snap).toEqual({ instance: "ghost", entries: [] });
+  });
+
+  it("runs the build command in the instance's workspace before start, and fails fast with E_BUILD_FAILED on a bad one", async () => {
+    const ws = await driver.prepare(workspaceSpec("A"));
+    const buildSpec: StartSpec = { ...startSpec, build: 'node -e "process.exit(1)"' };
+
+    const err = await driver.start(ws, buildSpec).catch((e: unknown) => e);
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_BUILD_FAILED");
+  });
+
+  it("start() succeeds once a passing build has written into the instance's own workspace", async () => {
+    const ws = await driver.prepare(workspaceSpec("A"));
+    const buildSpec: StartSpec = {
+      ...startSpec,
+      build: `node -e "require('fs').writeFileSync('built.txt', 'ok')"`
+    };
+
+    const handle = await driver.start(ws, buildSpec);
+    expect(handle.state).toBe("ready");
+    await expect(readFile(path.join(ws.dir, "built.txt"), "utf8")).resolves.toBe("ok");
+
+    await driver.stop(handle, { graceMs: 2000 });
+  });
+
+  it("classifies a stolen port as E_PORT_UNAVAILABLE instead of a generic boot failure", async () => {
+    // Destroys every connection immediately: pollHealth's own fetch() calls also
+    // land on this port while it's "stolen", and an unanswered connection would
+    // otherwise dangle until blocker.close()'s callback never fires.
+    const blocker = createServer((socket) => socket.destroy());
+    const takenPort = await new Promise<number>((resolve) => {
+      blocker.listen(0, "127.0.0.1", () => {
+        const address = blocker.address();
+        resolve(typeof address === "object" && address !== null ? address.port : 0);
+      });
+    });
+    // mockResolvedValue (not -Once): start() retries up to 3 times, and every
+    // retry must land on the same stolen port for the classification to hold.
+    const spy = vi.spyOn(portAllocator, "getFreePort").mockResolvedValue(takenPort);
+
+    try {
+      const ws = await driver.prepare(workspaceSpec("A"));
+      // A plain Node http server that reports the real EADDRINUSE error, like any real app would.
+      const conflictSpec: StartSpec = {
+        ...startSpec,
+        command: `node -e "require('http').createServer(()=>{}).listen(${takenPort}, '127.0.0.1')"`,
+        bootTimeoutMs: 2000
+      };
+
+      const err = await driver.start(ws, conflictSpec).catch((e: unknown) => e);
+      expect(TwinError.isTwinError(err)).toBe(true);
+      expect((err as TwinError).code).toBe("E_PORT_UNAVAILABLE");
+    } finally {
+      spy.mockRestore();
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    }
   });
 });

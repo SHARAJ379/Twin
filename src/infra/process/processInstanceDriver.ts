@@ -196,11 +196,28 @@ export class ProcessInstanceDriver implements InstanceDriver {
       env: { ...process.env, ...spec.env, [spec.portEnv]: String(port) },
       stdio: ["ignore", "pipe", "pipe"]
     });
+    let settled = false;
+    let spawnError: unknown;
+    // spawn() reports a failed exec (ENOENT, EACCES, a cwd that vanished
+    // mid-flight, ...) via an 'error' event, not a thrown exception or a
+    // rejected promise. With no listener, Node treats that as an uncaught
+    // exception and takes the whole process down with it.
+    child.on("error", (err) => {
+      if (settled) {
+        this.logger.warn(`instance ${ws.instance}'s process reported an error after boot`, {
+          error: err instanceof Error ? err.message : String(err)
+        });
+        return;
+      }
+      spawnError = err;
+    });
+
     child.stdout?.on("data", (chunk: Buffer) => logs.write(chunk));
     child.stderr?.on("data", (chunk: Buffer) => logs.write(chunk));
 
     const pid = child.pid;
     if (pid === undefined) {
+      settled = true;
       throw new TwinError("E_BOOT_CRASH", `Failed to spawn \`${spec.command}\` for instance ${ws.instance}.`, {
         hint: "Check that the start command is correct and the project is installed.",
         details: { instance: ws.instance }
@@ -217,11 +234,26 @@ export class ProcessInstanceDriver implements InstanceDriver {
     try {
       await pollHealth(baseUrl, spec.healthPath, spec.bootTimeoutMs);
     } catch (err) {
+      settled = true;
       // Ask the OS directly rather than trusting our `exited` flag here: the
       // 'exit' event can lag a tick behind the process actually being gone,
       // so reading it right now would be a race.
       const alreadyDead = !isProcessAlive(pid);
       if (!alreadyDead) await killTree(pid, { mode: "crash", graceMs: 0 });
+
+      if (spawnError !== undefined) {
+        throw new TwinError(
+          "E_BOOT_CRASH",
+          `Failed to spawn \`${spec.command}\` for instance ${ws.instance}: ${
+            spawnError instanceof Error ? spawnError.message : String(spawnError)
+          }`,
+          {
+            hint: "Check that the start command is correct and the project is installed.",
+            details: { instance: ws.instance, logTail: logs.lines(30) },
+            cause: spawnError
+          }
+        );
+      }
 
       // getFreePort() frees the port immediately after checking it, so
       // another process can grab it before this child binds it (rare, but
@@ -250,14 +282,16 @@ export class ProcessInstanceDriver implements InstanceDriver {
       );
     }
 
-    if (exited) {
+    if (exited || spawnError !== undefined) {
+      settled = true;
       throw new TwinError(
         "E_BOOT_CRASH",
         `Instance ${ws.instance} exited right after reporting healthy (${exitInfo}).`,
-        { details: { instance: ws.instance, logTail: logs.lines(30) } }
+        { details: { instance: ws.instance, logTail: logs.lines(30) }, cause: spawnError }
       );
     }
 
+    settled = true;
     this.running.set(ws.instance, { pid, dir: ws.dir, logs, startSpec: spec, startedAt: new Date().toISOString() });
     await this.persistPidFile();
     return { id: ws.instance, baseUrl, pid, state: "ready" };

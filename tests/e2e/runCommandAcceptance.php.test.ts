@@ -7,12 +7,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCommand, type RunOptions } from "../../src/cli/commands/run.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { runtimeMissing } from "./helpers/fixtureRequirements.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const brokenPhpDir = path.resolve(here, "../../examples/broken-php");
 const fixedPhpDir = path.resolve(here, "../../examples/fixed-php");
 
 const logger = new ConsoleLogger({ level: "error" }); // keep test output focused on assertion failures
+
+const phpMissing = runtimeMissing("PHP", "php --version");
 
 const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   start: "php -S 127.0.0.1:{{port}} index.php",
@@ -29,7 +32,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
  * built-in dev server, no Composer deps), broken and fixed, the same
  * acceptance shape as the Node fixtures.
  */
-describe("twin run against a live PHP app: broken => FAIL, fixed => PASS", () => {
+describe.skipIf(phpMissing)("twin run against a live PHP app: broken => FAIL, fixed => PASS", () => {
   const twinDirsToClean: string[] = [];
 
   afterEach(async () => {

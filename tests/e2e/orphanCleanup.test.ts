@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { cleanOrphans } from "../../src/cli/commands/clean.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { fixtureDepsMissing } from "./helpers/fixtureRequirements.js";
 import { isProcessAlive } from "../../src/infra/process/isProcessAlive.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -21,7 +22,9 @@ const logger = new ConsoleLogger({ level: "error" });
  * managing process with SIGKILL mid-run, then `twin clean` must reap
  * everything it left behind.
  */
-describe("orphan protection: twin clean reaps a process left behind by a killed manager", () => {
+describe.skipIf(fixtureDepsMissing(brokenExpressDir))(
+  "orphan protection: twin clean reaps a process left behind by a killed manager",
+  () => {
   let projectDir = "";
 
   afterEach(async () => {

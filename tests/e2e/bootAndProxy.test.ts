@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { InstanceHandle, StartSpec, WorkspaceSpec } from "../../src/ports/instanceDriver.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { fixtureDepsMissing } from "./helpers/fixtureRequirements.js";
 import { isProcessAlive } from "../../src/infra/process/isProcessAlive.js";
 import { ProcessInstanceDriver } from "../../src/infra/process/processInstanceDriver.js";
 import { HttpProxy } from "../../src/infra/proxy/httpProxy.js";
@@ -20,7 +21,9 @@ const brokenExpressDir = path.resolve(here, "../../examples/broken-express");
  * a real app, round-robin/pin through our real proxy, and leave no orphan
  * processes behind.
  */
-describe("twin boots two real instances and proxies between them", () => {
+describe.skipIf(fixtureDepsMissing(brokenExpressDir))(
+  "twin boots two real instances and proxies between them",
+  () => {
   let root: string;
   let driver: ProcessInstanceDriver;
   let proxy: HttpProxy;

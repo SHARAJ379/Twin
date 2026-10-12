@@ -7,12 +7,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCommand, type RunOptions } from "../../src/cli/commands/run.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { runtimeMissing } from "./helpers/fixtureRequirements.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const brokenPythonDir = path.resolve(here, "../../examples/broken-python");
 const fixedPythonDir = path.resolve(here, "../../examples/fixed-python");
 
 const logger = new ConsoleLogger({ level: "error" }); // keep test output focused on assertion failures
+
+const pythonMissing = runtimeMissing("Python", "python --version");
 
 const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   start: "python app.py",
@@ -29,7 +32,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
  * (stdlib http.server, no pip deps), broken and fixed, the same
  * acceptance shape as the Node fixtures.
  */
-describe("twin run against a live Python app: broken => FAIL, fixed => PASS", () => {
+describe.skipIf(pythonMissing)("twin run against a live Python app: broken => FAIL, fixed => PASS", () => {
   const twinDirsToClean: string[] = [];
 
   afterEach(async () => {

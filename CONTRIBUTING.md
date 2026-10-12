@@ -9,17 +9,23 @@ npm install
 npm run verify   # lint + dependency-cruiser + typecheck + build + test
 ```
 
-Some e2e tests boot real example apps as child processes:
+Some e2e tests boot real fixture apps as child processes. Those suites **skip themselves**
+when what they need isn't installed, printing a `[skip]` line saying why - so a bare clone
+runs green without every toolchain on your machine.
+
+To actually run them:
 
 ```bash
-npm ci --prefix examples/broken-express
+npm ci --prefix examples/broken-express   # the Node fixtures
 npm ci --prefix examples/fixed-express
 ```
 
-A handful of e2e tests also boot real Go/Ruby/PHP fixture apps (`examples/*-go`,
-`examples/*-ruby`, `examples/*-php`) - install `go`, `ruby`, and `php` locally to run those too,
-or skip them (`npx vitest run --exclude "**/*.go.test.ts" --exclude "**/*.ruby.test.ts" --exclude "**/*.php.test.ts"`).
-CI always runs the full suite with all toolchains installed.
+plus `go`, `ruby`, `php`, and `python` on your PATH for the `examples/*-go`, `*-ruby`,
+`*-php`, and `*-python` fixtures.
+
+In CI those same guards **fail** instead of skipping: CI installs every toolchain
+deliberately, so a missing one means the workflow is broken, and skipping would turn that
+into a green run that verified nothing - the exact failure mode Twin exists to catch.
 
 ## Before opening a PR
 

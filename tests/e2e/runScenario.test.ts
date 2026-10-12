@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parseScenarioYaml } from "../../src/domain/scenarioParser.js";
 import type { StepResult } from "../../src/domain/stepResult.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { fixtureDepsMissing } from "./helpers/fixtureRequirements.js";
 import { HttpScenarioClient } from "../../src/infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../src/infra/process/processInstanceDriver.js";
 import { HttpProxy } from "../../src/infra/proxy/httpProxy.js";
@@ -71,7 +72,9 @@ function find(results: StepResult[], stepId: string): StepResult {
  * bugs checks 2 and 4 exist to catch (without judging pass/fail yet - that's
  * milestone 4's Check layer).
  */
-describe("scenario engine runs the example flow against examples/broken-express", () => {
+describe.skipIf(fixtureDepsMissing(brokenExpressDir))(
+  "scenario engine runs the example flow against examples/broken-express",
+  () => {
   let root: string;
   let driver: ProcessInstanceDriver;
   let proxy: HttpProxy;

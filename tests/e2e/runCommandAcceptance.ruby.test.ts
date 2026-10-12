@@ -7,12 +7,15 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCommand, type RunOptions } from "../../src/cli/commands/run.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { runtimeMissing } from "./helpers/fixtureRequirements.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const brokenRubyDir = path.resolve(here, "../../examples/broken-ruby");
 const fixedRubyDir = path.resolve(here, "../../examples/fixed-ruby");
 
 const logger = new ConsoleLogger({ level: "error" }); // keep test output focused on assertion failures
+
+const rubyMissing = runtimeMissing("Ruby", "ruby --version");
 
 // Neither fixture has a Gemfile/config.ru marker (they're plain scripts on
 // stdlib `socket`, with no gem dependencies to install), so the stack is
@@ -32,7 +35,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
  * in the README: `twin run` end-to-end against a real Ruby app, broken and
  * fixed, the same acceptance shape as the Node fixtures.
  */
-describe("twin run against a live Ruby app: broken => FAIL, fixed => PASS", () => {
+describe.skipIf(rubyMissing)("twin run against a live Ruby app: broken => FAIL, fixed => PASS", () => {
   const twinDirsToClean: string[] = [];
 
   afterEach(async () => {

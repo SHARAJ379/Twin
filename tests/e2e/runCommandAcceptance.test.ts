@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCommand, type RunOptions } from "../../src/cli/commands/run.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { fixtureDepsMissing } from "./helpers/fixtureRequirements.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const brokenExpressDir = path.resolve(here, "../../examples/broken-express");
@@ -28,7 +29,9 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
  * end-to-end against the two example apps and a deliberately typo'd
  * scenario - exactly "broken => FAIL, fixed => PASS, typo scenario => ERROR".
  */
-describe("twin run: broken => FAIL, fixed => PASS, typo scenario => ERROR", () => {
+describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
+  "twin run: broken => FAIL, fixed => PASS, typo scenario => ERROR",
+  () => {
   const twinDirsToClean: string[] = [];
 
   afterEach(async () => {

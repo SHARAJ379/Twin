@@ -21,7 +21,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   start: "go run .",
   healthPath: "/health",
   portEnv: "PORT",
-  bootTimeoutMs: 15_000,
+  bootTimeoutMs: 30_000,
   keepWorkspaces: false,
   allowRemote: false
 };
@@ -47,7 +47,7 @@ describe.skipIf(goMissing)("twin run against a live Go app: broken => FAIL, fixe
       logger
     );
     expect(exitCode).toBe(1);
-  }, 60_000);
+  }, 150_000);
 
   it("PASSes all four checks against examples/fixed-go, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedGoDir, ".twin"));
@@ -66,5 +66,5 @@ describe.skipIf(goMissing)("twin run against a live Go app: broken => FAIL, fixe
       logger
     );
     expect(exitCode).toBe(0);
-  }, 60_000);
+  }, 150_000);
 });

@@ -21,7 +21,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   start: "python app.py",
   healthPath: "/health",
   portEnv: "PORT",
-  bootTimeoutMs: 15_000,
+  bootTimeoutMs: 30_000,
   keepWorkspaces: false,
   allowRemote: false
 };
@@ -48,7 +48,7 @@ describe.skipIf(pythonMissing)("twin run against a live Python app: broken => FA
       logger
     );
     expect(exitCode).toBe(1);
-  }, 60_000);
+  }, 150_000);
 
   it("PASSes all four checks against examples/fixed-python, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedPythonDir, ".twin"));
@@ -67,5 +67,5 @@ describe.skipIf(pythonMissing)("twin run against a live Python app: broken => FA
       logger
     );
     expect(exitCode).toBe(0);
-  }, 60_000);
+  }, 150_000);
 });

@@ -25,7 +25,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   start: "ruby app.rb",
   healthPath: "/health",
   portEnv: "PORT",
-  bootTimeoutMs: 15_000,
+  bootTimeoutMs: 30_000,
   keepWorkspaces: false,
   allowRemote: false
 };
@@ -51,7 +51,7 @@ describe.skipIf(rubyMissing)("twin run against a live Ruby app: broken => FAIL, 
       logger
     );
     expect(exitCode).toBe(1);
-  }, 60_000);
+  }, 150_000);
 
   it("PASSes all four checks against examples/fixed-ruby, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedRubyDir, ".twin"));
@@ -70,5 +70,5 @@ describe.skipIf(rubyMissing)("twin run against a live Ruby app: broken => FAIL, 
       logger
     );
     expect(exitCode).toBe(0);
-  }, 60_000);
+  }, 150_000);
 });

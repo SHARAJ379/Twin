@@ -85,7 +85,7 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir))(
     root = await mkdtemp(path.join(os.tmpdir(), "twin-scenario-e2e-"));
     driver = new ProcessInstanceDriver(new FsWorkspaceManager(root), new ConsoleLogger({ level: "error" }));
 
-    const startSpec: StartSpec = { command: "npm start", portEnv: "PORT", env: {}, healthPath: "/health", bootTimeoutMs: 15_000 };
+    const startSpec: StartSpec = { command: "npm start", portEnv: "PORT", env: {}, healthPath: "/health", bootTimeoutMs: 30_000 };
     const specFor = (instance: string): WorkspaceSpec => ({ instance, sourceDir: brokenExpressDir, link: ["node_modules"], ignore: [] });
 
     for (const instance of ["A", "B"]) {

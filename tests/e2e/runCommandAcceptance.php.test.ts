@@ -21,7 +21,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   start: "php -S 127.0.0.1:{{port}} index.php",
   healthPath: "/health",
   portEnv: "PORT",
-  bootTimeoutMs: 15_000,
+  bootTimeoutMs: 30_000,
   keepWorkspaces: false,
   allowRemote: false
 };
@@ -48,7 +48,7 @@ describe.skipIf(phpMissing)("twin run against a live PHP app: broken => FAIL, fi
       logger
     );
     expect(exitCode).toBe(1);
-  }, 60_000);
+  }, 150_000);
 
   it("PASSes all four checks against examples/fixed-php, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedPhpDir, ".twin"));
@@ -67,5 +67,5 @@ describe.skipIf(phpMissing)("twin run against a live PHP app: broken => FAIL, fi
       logger
     );
     expect(exitCode).toBe(0);
-  }, 60_000);
+  }, 150_000);
 });

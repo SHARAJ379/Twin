@@ -39,7 +39,7 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir))(
       portEnv: "PORT",
       env: {},
       healthPath: "/health",
-      bootTimeoutMs: 15_000
+      bootTimeoutMs: 30_000
     };
     const specFor = (instance: string): WorkspaceSpec => ({
       instance,

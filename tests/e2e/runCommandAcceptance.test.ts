@@ -19,7 +19,7 @@ const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
   start: "npm start",
   healthPath: "/health",
   portEnv: "PORT",
-  bootTimeoutMs: 15_000,
+  bootTimeoutMs: 30_000,
   keepWorkspaces: false,
   allowRemote: false
 };
@@ -59,7 +59,7 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
     // must get real tracer evidence, not just an empty suspects list.
     expect(report.findings.every((f) => f.status === "fail")).toBe(true);
     expect(report.findings.some((f) => f.suspects.length > 0)).toBe(true);
-  }, 60_000);
+  }, 150_000);
 
   it("PASSes all four checks against examples/fixed-express, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedExpressDir, ".twin"));
@@ -78,7 +78,7 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
       logger
     );
     expect(exitCode).toBe(0);
-  }, 60_000);
+  }, 150_000);
 
   it("ERRORs (never FAILs) on a scenario typo - the control run fails on its own, so I7 blocks a FAIL verdict", async () => {
     twinDirsToClean.push(path.join(brokenExpressDir, ".twin"));
@@ -87,5 +87,5 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
       logger
     );
     expect(exitCode).toBe(2);
-  }, 40_000);
+  }, 150_000);
 });

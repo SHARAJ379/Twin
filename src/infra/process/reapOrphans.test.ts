@@ -51,7 +51,13 @@ describe("reapOrphans", () => {
 
     const result = await reapOrphans(records, logger);
 
-    expect(result.skippedPidReuse).toHaveLength(1);
+    // Asserts the invariant that matters - it was skipped, not killed - rather
+    // than which bucket it landed in. Which one depends on whether the OS
+    // answered the command-line lookup at all, and that varies with platform
+    // and machine load; both answers are "left it alone", which is the point.
+    // reapOrphansFailSafe.test.ts pins the unverifiable branch deterministically.
+    expect(result.reaped).toHaveLength(0);
+    expect(result.skippedPidReuse.length + result.skippedUnverifiable.length).toBe(1);
     expect(isProcessAlive(process.pid)).toBe(true);
   });
 });

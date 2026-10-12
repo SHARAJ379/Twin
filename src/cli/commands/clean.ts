@@ -14,7 +14,7 @@ export async function cleanOrphans(projectDir: string, logger: Logger): Promise<
     runIds = await readdir(runsDir);
   } catch {
     logger.info("nothing to clean up (no .twin/runs directory)");
-    return { reaped: [], alreadyDead: [], skippedPidReuse: [] };
+    return { reaped: [], alreadyDead: [], skippedPidReuse: [], skippedUnverifiable: [] };
   }
 
   const allRecords = (
@@ -26,7 +26,11 @@ export async function cleanOrphans(projectDir: string, logger: Logger): Promise<
   for (const record of result.reaped) {
     logger.info(`reaped orphaned process for instance ${record.instance}`, { pid: record.pid });
   }
-  if (result.reaped.length === 0 && result.skippedPidReuse.length === 0) {
+  if (
+    result.reaped.length === 0 &&
+    result.skippedPidReuse.length === 0 &&
+    result.skippedUnverifiable.length === 0
+  ) {
     logger.info("nothing to clean up");
   }
 

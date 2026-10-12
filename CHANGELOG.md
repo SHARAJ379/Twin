@@ -12,6 +12,10 @@ shift between minor versions.
 - `SECURITY.md` documenting the trust model and vulnerability reporting process.
 - CodeQL static analysis and Dependabot (npm + GitHub Actions) in CI.
 - `npm audit` gate in CI for production dependencies.
+- Python joins Node.js, Go, Ruby and PHP as end-to-end validated against a real
+  running app (`examples/broken-python` / `examples/fixed-python`, stdlib
+  `http.server`, no pip dependencies) with a CI-enforced e2e acceptance test -
+  all five supported stacks now have the same live-validation coverage.
 
 ### Changed
 

@@ -115,19 +115,12 @@ rules.
 
 ### How thoroughly each stack is tested
 
-Honest status, because it differs:
-
-- **Node.js, Go, Ruby and PHP** are validated end-to-end against real running
-  apps, in both directions — Twin correctly fails a broken app *and* passes a
-  correctly built stateless one. `examples/broken-<stack>` /
-  `examples/fixed-<stack>` are real apps in that language; CI boots them with
-  a real `go`/`ruby`/`php` toolchain and asserts `twin run`'s exit code and
-  findings, the same shape as the Node fixtures.
-- **Python** has been run by hand against a live app, but doesn't yet have a
-  committed example app or an automated e2e test like the other four stacks.
-  Detection and the suspect patterns are unit-tested; the boot path isn't
-  pinned down in CI yet. Expect to need `--start` on your first try, and
-  please report what it got wrong.
+**Node.js, Python, Go, Ruby and PHP** are all validated end-to-end against real
+running apps, in both directions — Twin correctly fails a broken app *and*
+passes a correctly built stateless one. `examples/broken-<stack>` /
+`examples/fixed-<stack>` are real apps in that language; CI boots them with a
+real toolchain for each and asserts `twin run`'s exit code and findings, the
+same shape across all five.
 
 ## Configuration
 

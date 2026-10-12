@@ -9,5 +9,6 @@ examples/*/uploads/
 examples/*/sessions/
 examples/*/data.json
 examples/*/items.json
+examples/*/__pycache__/
 .claude/
 examples/*/.twin/

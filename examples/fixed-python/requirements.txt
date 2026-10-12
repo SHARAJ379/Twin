@@ -1,0 +1,2 @@
+# No third-party dependencies - app.py only uses the standard library, so
+# this file exists purely as Twin's Python-stack marker (requirements.txt).

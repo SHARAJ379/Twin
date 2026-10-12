@@ -6,5 +6,8 @@ coverage/
 .DS_Store
 examples/*/node_modules/
 examples/*/uploads/
+examples/*/sessions/
+examples/*/data.json
+examples/*/items.json
 .claude/
 examples/*/.twin/

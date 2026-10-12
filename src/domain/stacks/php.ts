@@ -97,8 +97,11 @@ function resolveStartCommand(input: StackDetectionInput): string | undefined {
 
   if (has("artisan")) return "php artisan serve --host=127.0.0.1 --port={{port}}";
   // PHP's built-in server needs a document root; public/ is the near-universal convention.
-  if (has("public")) return "php -S 127.0.0.1:{{port}} -t public";
-  if (has("index.php")) return "php -S 127.0.0.1:{{port}}";
+  // Without an explicit router script, the server only falls back to index.php for
+  // extensionless paths - a route like /uploads/foo.txt 404s before index.php ever runs.
+  // Passing the front controller explicitly routes every request through it.
+  if (has("public")) return "php -S 127.0.0.1:{{port}} -t public public/index.php";
+  if (has("index.php")) return "php -S 127.0.0.1:{{port}} index.php";
   return undefined;
 }
 

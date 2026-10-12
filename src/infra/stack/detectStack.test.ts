@@ -150,7 +150,12 @@ describe("detectStack", () => {
 
     it("serves public/ with the built-in server when there's no artisan", async () => {
       const dir = await project({ "composer.json": "{}" }, ["public"]);
-      expect((await detectStack(dir)).startCommand).toBe("php -S 127.0.0.1:{{port}} -t public");
+      expect((await detectStack(dir)).startCommand).toBe("php -S 127.0.0.1:{{port}} -t public public/index.php");
+    });
+
+    it("routes through index.php explicitly, so a dotted path like /uploads/file.txt still reaches it", async () => {
+      const dir = await project({ "index.php": "<?php" });
+      expect((await detectStack(dir)).startCommand).toBe("php -S 127.0.0.1:{{port}} index.php");
     });
   });
 });

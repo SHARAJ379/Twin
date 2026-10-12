@@ -117,14 +117,17 @@ rules.
 
 Honest status, because it differs:
 
-- **Node.js and Python** are validated end-to-end against real running apps, in
-  both directions — Twin correctly fails a broken app *and* passes a correctly
-  built stateless one.
-- **Go, Ruby and PHP** ship with detection and tracer rules that are unit-tested
-  (every rule carries must-match and must-not-match fixtures, enforced in CI),
-  but they have not yet been run against a live app of that language. Detection
-  and the suspect patterns are tested; the boot path is not. Expect to need
-  `--start` on your first try, and please report what it got wrong.
+- **Node.js, Go, Ruby and PHP** are validated end-to-end against real running
+  apps, in both directions — Twin correctly fails a broken app *and* passes a
+  correctly built stateless one. `examples/broken-<stack>` /
+  `examples/fixed-<stack>` are real apps in that language; CI boots them with
+  a real `go`/`ruby`/`php` toolchain and asserts `twin run`'s exit code and
+  findings, the same shape as the Node fixtures.
+- **Python** has been run by hand against a live app, but doesn't yet have a
+  committed example app or an automated e2e test like the other four stacks.
+  Detection and the suspect patterns are unit-tested; the boot path isn't
+  pinned down in CI yet. Expect to need `--start` on your first try, and
+  please report what it got wrong.
 
 ## Configuration
 

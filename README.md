@@ -211,6 +211,13 @@ torn down cleanly (crash, Ctrl-C mid-run, etc).
 --project <dir>    project directory to clean (default: cwd)
 ```
 
+It only kills a process it can still positively identify as one Twin started.
+Operating systems reuse process ids, so a pid recorded by an old run may belong
+to something else entirely by now — if the live command line doesn't match, or
+if the OS won't say what the process is at all, Twin reports it and leaves it
+alone rather than risk killing something of yours. Those it skips are named in
+the output, so you can kill them yourself if they really are leftovers.
+
 ## Exit codes
 
 | code | meaning                                                             |
@@ -283,3 +290,8 @@ afterward. It never touches your actual source tree.
 
 Twin runs your project's own start command with no sandboxing - see [SECURITY.md](SECURITY.md)
 for the full trust model, and where to report a vulnerability.
+
+## Contributing
+
+Setup, how to run the e2e fixtures, and the pre-1.0 versioning policy are in
+[CONTRIBUTING.md](CONTRIBUTING.md). Notable changes are recorded in [CHANGELOG.md](CHANGELOG.md).

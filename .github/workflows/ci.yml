@@ -20,7 +20,7 @@ jobs:
           cache: npm
       # The Python/Go/Ruby/PHP fixture apps that the live-validation e2e tests
       # boot as real child processes (examples/*-python, *-go, *-ruby, *-php).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - uses: actions/setup-go@v5

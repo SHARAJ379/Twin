@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import secrets
+import socketserver
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,6 +71,23 @@ def parse_multipart(body: bytes, boundary: bytes):
             filename = headers[start:end].decode("utf-8", "replace")
         return filename, content
     return None
+
+
+class Server(ThreadingHTTPServer):
+    """
+    ThreadingHTTPServer without the startup reverse-DNS lookup.
+
+    HTTPServer.server_bind() calls socket.getfqdn() on the bind address, and
+    TCPServer.__init__ runs it *before* server_activate() calls listen(). On a
+    host with a slow resolver (CI runners especially) that blocks for tens of
+    seconds with the socket bound but not yet listening - connections get
+    refused, nothing is logged, and the process looks alive but serves nothing.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = self.server_address[0]
+        self.server_port = self.server_address[1]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -187,6 +205,6 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "3000"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = Server(("127.0.0.1", port), Handler)
     print(f"fixed-python listening on {port}")
     server.serve_forever()

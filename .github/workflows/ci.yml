@@ -35,6 +35,7 @@ jobs:
       # have no node_modules on a clean checkout and every one of those tests fails.
       - run: npm ci --prefix examples/broken-express
       - run: npm ci --prefix examples/fixed-express
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run depcheck
       - run: npm run build

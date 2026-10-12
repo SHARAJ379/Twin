@@ -1,7 +1,9 @@
 {
-  "name": "twin",
+  "name": "@sharaj379/twin",
   "version": "0.1.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Runs two copies of your app and shows you where they disagree.",
   "keywords": ["testing", "multi-instance", "differential-testing", "cli", "regression-testing"],
   "license": "MIT",

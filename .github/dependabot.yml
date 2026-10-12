@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      dev-dependencies:
+        dependency-type: "development"
+  - package-ecosystem: "npm"
+    directory: "/examples/broken-express"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/examples/fixed-express"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -1,0 +1,19 @@
+name: Feature request
+description: Propose a new check, stack, or capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to catch or do that Twin doesn't support today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: If this is a new built-in check or stack, sketch the scenario step shape or detection rule you'd expect.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you've tried

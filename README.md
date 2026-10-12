@@ -285,3 +285,8 @@ startup).
 Every run is **ephemeral**: Twin clones your project into temp workspaces per
 instance (symlinking `node_modules`), runs there, and tears everything down
 afterward. It never touches your actual source tree.
+
+## Security
+
+Twin runs your project's own start command with no sandboxing - see [SECURITY.md](SECURITY.md)
+for the full trust model, and where to report a vulnerability.

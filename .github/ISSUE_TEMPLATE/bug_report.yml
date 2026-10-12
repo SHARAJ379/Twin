@@ -1,0 +1,49 @@
+name: Bug report
+description: Something in twin run/init/report/doctor/clean didn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Include the full terminal output if you can - Twin's own error messages usually name the cause.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Twin version
+      description: Output of `twin --version`
+    validations:
+      required: true
+  - type: dropdown
+    id: stack
+    attributes:
+      label: Stack
+      options:
+        - Node.js
+        - Python
+        - Go
+        - Ruby
+        - PHP
+        - Other / polyglot
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "e.g. Windows 11, Ubuntu 22.04, macOS 14"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A `twin.config.json` + `scenario.yaml` (or a link to a minimal repo) that reproduces it.

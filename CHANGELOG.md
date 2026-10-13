@@ -55,6 +55,9 @@ kind of change each item was, not to imply a version before this one.
 - Temp workspaces are removed when a run fails, not only when it succeeds.
 - An instance that booted is stopped when a later one fails to boot, instead of being left
   running and holding its port.
+- The SPLIT phase has one teardown path instead of two, so a failure in the stages that sat
+  between them - the before-run snapshots, and the proxy binding its port - no longer returns
+  with the instances still running and the proxy still bound.
 - Instance log capture closes on the child's `close`, not its `exit`, which could truncate
   the last output and write to an ended stream.
 

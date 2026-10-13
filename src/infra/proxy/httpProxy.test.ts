@@ -145,6 +145,101 @@ describe("HttpProxy", () => {
     }
   });
 
+  it("forwards a request body through to the instance", async () => {
+    const received: string[] = [];
+    const echo = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk.toString()));
+      req.on("end", () => {
+        received.push(body);
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end(JSON.stringify({ length: body.length }));
+      });
+    });
+    await new Promise<void>((resolve) => echo.listen(0, "127.0.0.1", () => resolve()));
+    const address = echo.address();
+    const port = typeof address === "object" && address !== null ? address.port : 0;
+
+    const proxyWithEcho = new HttpProxy();
+    const started = await proxyWithEcho.start(() => [{ id: "A", baseUrl: `http://127.0.0.1:${port}`, state: "ready" }]);
+    try {
+      const res = await fetch(`${started.url}/items`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "test" })
+      });
+      expect(res.status).toBe(201);
+      expect(received).toEqual(['{"name":"test"}']);
+    } finally {
+      await proxyWithEcho.stop();
+      echo.closeAllConnections();
+      await new Promise((resolve) => echo.close(resolve));
+    }
+  });
+
+  it("streams a chunked response back whole, rather than truncating at the first chunk", async () => {
+    const chunked = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.write("first-");
+      res.write("second-");
+      setTimeout(() => res.end("third"), 20);
+    });
+    await new Promise<void>((resolve) => chunked.listen(0, "127.0.0.1", () => resolve()));
+    const address = chunked.address();
+    const port = typeof address === "object" && address !== null ? address.port : 0;
+
+    const streamProxy = new HttpProxy();
+    const started = await streamProxy.start(() => [{ id: "A", baseUrl: `http://127.0.0.1:${port}`, state: "ready" }]);
+    try {
+      const res = await fetch(`${started.url}/stream`);
+      expect(await res.text()).toBe("first-second-third");
+    } finally {
+      await streamProxy.stop();
+      chunked.closeAllConnections();
+      await new Promise((resolve) => chunked.close(resolve));
+    }
+  });
+
+  it("preserves a redirect's status and Location instead of following it", async () => {
+    const redirector = http.createServer((_req, res) => {
+      res.writeHead(302, { location: "/elsewhere" });
+      res.end();
+    });
+    await new Promise<void>((resolve) => redirector.listen(0, "127.0.0.1", () => resolve()));
+    const address = redirector.address();
+    const port = typeof address === "object" && address !== null ? address.port : 0;
+
+    const redirectProxy = new HttpProxy();
+    const started = await redirectProxy.start(() => [{ id: "A", baseUrl: `http://127.0.0.1:${port}`, state: "ready" }]);
+    try {
+      // A session cookie set on a redirect is exactly the evidence a
+      // session-survives-switch scenario depends on, so the proxy must not
+      // swallow either half of it.
+      const res = await fetch(`${started.url}/login`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe("/elsewhere");
+      expect(res.headers.get("x-twin-instance")).toBe("A");
+    } finally {
+      await redirectProxy.stop();
+      redirector.closeAllConnections();
+      await new Promise((resolve) => redirector.close(resolve));
+    }
+  });
+
+  it("502s when the instance's port accepts nothing at all", async () => {
+    // A port nothing listens on: the connection is refused rather than
+    // timing out, which is a different branch from the 504 above.
+    const deadProxy = new HttpProxy();
+    const started = await deadProxy.start(() => [{ id: "A", baseUrl: "http://127.0.0.1:1", state: "ready" }]);
+    try {
+      const res = await fetch(`${started.url}/anything`);
+      expect(res.status).toBe(502);
+      expect(res.headers.get("x-twin-instance")).toBe("A");
+    } finally {
+      await deadProxy.stop();
+    }
+  });
+
   it("emits a ProxyEvent per request with instance, status, and timing", async () => {
     const events = proxy.events();
     const collected: unknown[] = [];

@@ -35,26 +35,25 @@ export async function runSplitPhase(
   proxy: Proxy,
   scenarioClient: ScenarioClient
 ): Promise<SplitRunResult> {
+  // One try covering everything from the first boot onwards, so there is a
+  // single teardown path. There used to be two - one for a boot failure, one
+  // for a scenario failure - with the `before` snapshots and `proxy.start()`
+  // sitting in the gap between them. Either of those throwing (proxy.start
+  // raises E_PORT_UNAVAILABLE when something grabs its port first) returned
+  // from this function with A and B still running and the proxy still bound,
+  // breaking the promise made right above: callers never see live handles.
   const instances: InstanceHandle[] = [];
+  let result: SplitRunResult | undefined;
+  let primaryError: unknown;
   try {
     for (const instance of spec.instanceIds) {
       const ws = await instanceDriver.prepare({ instance, sourceDir: spec.sourceDir, link: spec.link, ignore: spec.ignore });
       instances.push(await instanceDriver.start(ws, spec.start));
     }
-  } catch (err) {
-    // B failing to boot used to leave A running, holding its port, with
-    // nothing left holding a handle to it. Tear down whatever did start
-    // before letting the boot failure out.
-    await Promise.allSettled(instances.map((handle) => instanceDriver.stop(handle, { graceMs: 5000 })));
-    throw err;
-  }
 
-  const before = await Promise.all(instances.map((h) => instanceDriver.snapshot(h)));
+    const before = await Promise.all(instances.map((h) => instanceDriver.snapshot(h)));
+    const started = await proxy.start(() => instances);
 
-  const started = await proxy.start(() => instances);
-  let result: SplitRunResult | undefined;
-  let primaryError: unknown;
-  try {
     const results = await scenarioClient.run(scenario, {
       proxyUrl: started.url,
       instanceDriver,
@@ -72,8 +71,9 @@ export async function runSplitPhase(
     primaryError = err;
   }
 
-  // Best-effort: the proxy has no "instance" to report as leaked, and a
-  // failure here must not mask the scenario's own result either.
+  // Best-effort, and unconditional: the proxy has no "instance" to report as
+  // leaked, a failure here must not mask the scenario's own result, and
+  // start() can reject after it has already bound the port.
   await proxy.stop().catch(() => undefined);
   // allSettled, not a sequential loop: one instance's stop() throwing must
   // never skip tearing down the rest (that would leak a live process).

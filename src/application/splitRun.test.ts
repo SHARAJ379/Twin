@@ -42,12 +42,35 @@ function fakeDriver(stopResults: Record<string, "ok" | "fail">): { driver: Insta
   return { driver, stopped };
 }
 
-function fakeProxy(): Proxy {
+function fakeProxy(overrides: Partial<Proxy> = {}): Proxy {
   return {
     start: () => Promise.resolve({ url: "http://fake-proxy" }),
     stop: () => Promise.resolve(),
-    events: () => ({ [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ value: undefined, done: true as const }) }) })
+    events: () => ({ [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ value: undefined, done: true as const }) }) }),
+    ...overrides
   };
+}
+
+/** Boots instantly and records stops; `failOn` makes one driver call reject. */
+function trackingDriver(failOn: { snapshot?: boolean } = {}): { driver: InstanceDriver; stopped: string[] } {
+  const stopped: string[] = [];
+  const driver: InstanceDriver = {
+    prepare: (spec: WorkspaceSpec): Promise<PreparedWorkspace> =>
+      Promise.resolve({ instance: spec.instance, dir: `/ws/${spec.instance}` }),
+    start: (ws: PreparedWorkspace): Promise<InstanceHandle> =>
+      Promise.resolve({ id: ws.instance, baseUrl: `http://fake/${ws.instance}`, pid: 1, state: "ready" }),
+    stop: (handle: InstanceHandle, _opts: StopOptions): Promise<void> => {
+      stopped.push(handle.id);
+      return Promise.resolve();
+    },
+    restart: (handle: InstanceHandle, _opts: RestartOptions): Promise<InstanceHandle> => Promise.resolve(handle),
+    logs: () => ({ lines: () => [] }),
+    snapshot: (handle: InstanceHandle): Promise<FsSnapshot> =>
+      failOn.snapshot === true
+        ? Promise.reject(new Error("snapshot failed"))
+        : Promise.resolve({ instance: handle.id, entries: [] })
+  };
+  return { driver, stopped };
 }
 
 function fakeClient(results: StepResult[] | (() => unknown)): ScenarioClient {
@@ -107,6 +130,44 @@ describe("runSplitPhase boot failures", () => {
 
     expect(stopped).toEqual([]);
     expect((err as TwinError).code).toBe("E_BOOT_TIMEOUT");
+  });
+});
+
+describe("runSplitPhase teardown on the stages between boot and scenario", () => {
+  it("stops every instance when the proxy fails to bind its port", async () => {
+    const { driver, stopped } = trackingDriver();
+    const proxy = fakeProxy({
+      start: () => Promise.reject(new TwinError("E_PORT_UNAVAILABLE", "something grabbed the port first"))
+    });
+
+    const err = await runSplitPhase(scenario, fakeSpec({ A: "ok", B: "ok" }), driver, proxy, fakeClient([])).catch(
+      (e: unknown) => e
+    );
+
+    // Both had booted by then, and this stage used to sit outside every
+    // teardown path - so they stayed up, holding their ports, with the caller
+    // holding no handles to them.
+    expect(stopped.sort()).toEqual(["A", "B"]);
+    expect((err as TwinError).code).toBe("E_PORT_UNAVAILABLE");
+  });
+
+  it("stops every instance, and the proxy, when the before-snapshot fails", async () => {
+    const { driver, stopped } = trackingDriver({ snapshot: true });
+    let proxyStopped = false;
+    const proxy = fakeProxy({
+      stop: () => {
+        proxyStopped = true;
+        return Promise.resolve();
+      }
+    });
+
+    const err = await runSplitPhase(scenario, fakeSpec({ A: "ok", B: "ok" }), driver, proxy, fakeClient([])).catch(
+      (e: unknown) => e
+    );
+
+    expect(stopped.sort()).toEqual(["A", "B"]);
+    expect(proxyStopped).toBe(true);
+    expect((err as Error).message).toContain("snapshot failed");
   });
 });
 

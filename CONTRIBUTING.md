@@ -6,6 +6,8 @@ Thanks for considering a contribution to Twin.
 
 ```bash
 npm install
+npm run build
+npm link         # makes your working copy's `twin` available on your PATH
 npm run verify   # lint + dependency-cruiser + typecheck + build + test
 ```
 
@@ -34,6 +36,17 @@ into a green run that verified nothing - the exact failure mode Twin exists to c
   (`examples/broken-<stack>` / `examples/fixed-<stack>`) and an e2e acceptance test, not just
   unit-tested detection/tracer rules - see the existing `examples/*` pairs for the pattern.
 - If you changed the scenario schema, update `docs/scenario.schema.json` too.
+- If you changed anything about what gets packaged (`files`, `bin`, the build output,
+  dependencies), run `npm run pack:smoke` - it packs the tarball, installs it into a clean
+  project and drives the installed binary, which `npm run verify` can't tell you anything
+  about.
+
+## Releasing
+
+Publishing is tag-driven. Bump the version in `package.json`, move the changes under a new
+`CHANGELOG.md` heading, then push a matching tag (`v0.2.0`): `.github/workflows/release.yml`
+verifies the tag agrees with `package.json`, runs the pack smoke test, and publishes to npm
+with provenance. It needs an `NPM_TOKEN` repository secret.
 
 ## Versioning
 

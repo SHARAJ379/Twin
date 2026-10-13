@@ -1,0 +1,50 @@
+name: Release
+
+# Publishing is tag-driven: push v0.1.0 and this publishes 0.1.0 to npm with
+# provenance, so the registry can attest the tarball was built from this repo
+# at this commit.
+#
+# Requires one repository secret, NPM_TOKEN - an npm automation token for the
+# @sharaj379 scope (Settings > Secrets and variables > Actions).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write # npm provenance signs through this, not through NPM_TOKEN
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: npm ci
+
+      # A tag that disagrees with package.json publishes the wrong version
+      # under the right name, which can't be taken back.
+      - name: Check the tag matches package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -u
+          tag="${TAG#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $tag does not match package.json version $pkg"
+            exit 1
+          fi
+
+      # The tarball itself, before it's the published one.
+      - run: npm run pack:smoke
+
+      # prepublishOnly runs lint + depcheck + typecheck + build + test first.
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

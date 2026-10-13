@@ -19,12 +19,14 @@ Python, Go, Ruby and PHP** are all supported, detected automatically.
 ## Install
 
 ```bash
-npm install
-npm run build
-npm link   # makes `twin` available on your PATH, or run via `node dist/cli/index.js`
+npm install -g @sharaj379/twin
+twin doctor   # checks your machine can run it
 ```
 
-Requires Node.js >= 20. Run `twin doctor` to check your machine can run it.
+The package is scoped but the command isn't - it's `twin` once installed. To
+run it without installing: `npx @sharaj379/twin run`. Requires Node.js >= 20.
+
+Working on Twin itself is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Quickstart
 
@@ -60,6 +62,32 @@ steps:
 ```
 
 Full step/check reference: [docs/scenario.schema.json](docs/scenario.schema.json).
+
+### Testing more than one user at a time
+
+Each step uses its own cookie jar, picked with `as:`. Jars have to be declared
+up front, because a typo in `as:` would otherwise quietly send the request
+with no cookies at all - and a scenario that believes it's testing two users
+would really be testing one anonymous one, green the whole way:
+
+```yaml
+name: tenant-isolation
+version: 1
+clients: [alice, bob]
+steps:
+  - id: alice-login
+    kind: request
+    as: alice
+    request: { method: POST, path: /login, json: { email: "alice@test.com", password: "pw" } }
+    expect: { status: 200 }
+  - id: bob-cannot-read-alices-note
+    kind: request
+    as: bob
+    request: { method: GET, path: "/notes/{{noteId}}" }
+    expect: { status: 404 }
+```
+
+A step with no `as:` uses the `default` jar, which never needs declaring.
 
 ### Built-in checks
 
@@ -146,8 +174,10 @@ All fields are optional:
 | `healthPath`    | path polled for readiness                                       | `/health`                               |
 | `portEnv`       | env var name the app reads its port from                        | `PORT`                                  |
 | `bootTimeoutMs` | boot timeout per instance, in ms                                 | `60000`                                 |
+| `requestTimeoutMs` | deadline for a single scenario request, in ms                 | `30000`                                 |
 | `env`           | extra env vars for every instance                                | `{}`                                    |
 | `allowRemote`   | allow running even if the environment looks like a real DB/service | `false`                             |
+| `redactHeaders` | extra header names to redact from the report's evidence          | `[]`                                    |
 
 On Node, start-command detection checks `package.json`'s `scripts` for `start`,
 then `dev`, then `serve`; if none exist but there's exactly one other script, it
@@ -171,10 +201,19 @@ against both, and writes a report.
 --health-path <path>    path polled for readiness (default "/health")
 --port-env <name>       env var the app reads its port from (default "PORT")
 --boot-timeout-ms <ms>  boot timeout per instance (default 60000)
+--request-timeout-ms <ms>
+                        deadline for a single scenario request (default 30000)
+--redact-header <name>  also redact this header from the report (repeatable)
 --env <KEY=VALUE>       extra env var for every instance (repeatable)
 --keep-workspaces       don't delete the per-instance tmp workspaces on exit
 --allow-remote          allow running even if the environment looks like a non-local DB/service
 ```
+
+Every wait is bounded: no step can take longer than `--request-timeout-ms`
+(times `retries + 1`, for a step that has them), and no instance longer than
+`--boot-timeout-ms` to come up. An app that accepts the connection and never
+answers - or answers with a stream that never ends - fails that step instead
+of stalling the run.
 
 ### `twin report`
 
@@ -205,7 +244,9 @@ Checks that your machine can run Twin (Node version, platform, git).
 ### `twin clean`
 
 Kills any orphaned instance processes left behind by a past run that didn't get
-torn down cleanly (crash, Ctrl-C mid-run, etc).
+torn down cleanly. Ctrl-C handles itself - it stops the instances it started
+and removes their workspaces before exiting - so this is for the cases that
+can't: a crash, a killed terminal, a machine that went to sleep.
 
 ```
 --project <dir>    project directory to clean (default: cwd)
@@ -237,10 +278,13 @@ checked-out repo and exposes the report as a step output:
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: SHARAJ379/Twin@master
+- uses: SHARAJ379/Twin@v0.1.0
   with:
     project-dir: .
 ```
+
+Pin a tag, not `@master` - the branch moves, and a CI job that silently
+changes behavior is worse than one that needs a version bump.
 
 ## Troubleshooting
 
@@ -258,6 +302,8 @@ outright. The common ones:
 | `E_NO_STACK` | no marker file identifies the project, or the stack is known but its entrypoint isn't | `--start "<command>"` (and `--stack <id>` to get the right tracer rules) |
 | `E_AMBIGUOUS_STACK` | a polyglot repo matches two stacks | `--stack <id>` to say which one serves HTTP |
 | Python `ModuleNotFoundError` on boot | the start command used a `python` without the project's deps | let Twin detect it (it uses `.venv`), or point `--start` at the venv interpreter |
+| `request timed out after 30000ms` | the app never answered that route, or it streams a response that never ends (SSE) | `--request-timeout-ms` if it's just slow; websockets/SSE aren't supported as scenario steps |
+| `"as: x" is not a declared client` | a jar used by a step isn't in the scenario's `clients` | add it to `clients:` - or fix the typo, which is what this usually is |
 
 ## How it works
 
@@ -277,6 +323,10 @@ outright. The common ones:
 6. **REPORT** - writes `report.json` / `report.md` to `.twin/runs/<id>/`, prints a
    terminal summary with a ready-to-paste fix prompt per failure, and exits 0/1/2.
 
+Each finding points at the steps it judged (`{"run": "split", "stepId": "me-check"}`);
+`results.json` in the same directory is what those pointers resolve against - every
+step's request, response and timing, from both runs.
+
 Each instance's own stdout/stderr is kept at `.twin/runs/<id>/logs/<instance>.log`,
 and the tail of it is printed inline when an instance fails to boot - that output is
 usually the whole diagnosis (a missing build step, a wrong port env var, a crash on
@@ -290,6 +340,15 @@ afterward. It never touches your actual source tree.
 
 Twin runs your project's own start command with no sandboxing - see [SECURITY.md](SECURITY.md)
 for the full trust model, and where to report a vulnerability.
+
+Two things are worth knowing up front. Twin refuses to run when the
+environment looks like it points a datastore somewhere non-local - a
+`DATABASE_URL`, a `DB_HOST`, a seed list - because it writes real test data;
+`--allow-remote` is the override. And everything Twin writes down is redacted
+first: reports and `results.json` keep an allowlist of headers with cookie
+values masked, and the instance logs (plus the tail printed on a boot failure,
+which lands in CI output) have the run's own secrets, URL credentials and
+bearer tokens stripped out of them.
 
 ## Contributing
 

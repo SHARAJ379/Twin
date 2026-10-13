@@ -57,6 +57,59 @@ function fakeClient(results: StepResult[] | (() => unknown)): ScenarioClient {
   };
 }
 
+describe("runSplitPhase boot failures", () => {
+  it("stops the instances that did boot when a later one fails to boot", async () => {
+    const stopped: string[] = [];
+    const driver: InstanceDriver = {
+      prepare: (spec: WorkspaceSpec): Promise<PreparedWorkspace> =>
+        Promise.resolve({ instance: spec.instance, dir: `/ws/${spec.instance}` }),
+      start: (ws: PreparedWorkspace): Promise<InstanceHandle> =>
+        ws.instance === "B"
+          ? Promise.reject(new TwinError("E_BOOT_CRASH", "B crashed on boot"))
+          : Promise.resolve({ id: ws.instance, baseUrl: `http://fake/${ws.instance}`, pid: 1, state: "ready" }),
+      stop: (handle: InstanceHandle, _opts: StopOptions): Promise<void> => {
+        stopped.push(handle.id);
+        return Promise.resolve();
+      },
+      restart: (handle: InstanceHandle, _opts: RestartOptions): Promise<InstanceHandle> => Promise.resolve(handle),
+      logs: () => ({ lines: () => [] }),
+      snapshot: (handle: InstanceHandle): Promise<FsSnapshot> => Promise.resolve({ instance: handle.id, entries: [] })
+    };
+
+    const err = await runSplitPhase(scenario, fakeSpec({ A: "ok", B: "ok" }), driver, fakeProxy(), fakeClient([])).catch(
+      (e: unknown) => e
+    );
+
+    // A used to be left running, holding its port, with nothing holding a handle to it.
+    expect(stopped).toEqual(["A"]);
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_BOOT_CRASH");
+  });
+
+  it("surfaces the boot failure as-is when the first instance is the one that fails", async () => {
+    const stopped: string[] = [];
+    const driver: InstanceDriver = {
+      prepare: (spec: WorkspaceSpec): Promise<PreparedWorkspace> =>
+        Promise.resolve({ instance: spec.instance, dir: `/ws/${spec.instance}` }),
+      start: (): Promise<InstanceHandle> => Promise.reject(new TwinError("E_BOOT_TIMEOUT", "never became healthy")),
+      stop: (handle: InstanceHandle, _opts: StopOptions): Promise<void> => {
+        stopped.push(handle.id);
+        return Promise.resolve();
+      },
+      restart: (handle: InstanceHandle, _opts: RestartOptions): Promise<InstanceHandle> => Promise.resolve(handle),
+      logs: () => ({ lines: () => [] }),
+      snapshot: (handle: InstanceHandle): Promise<FsSnapshot> => Promise.resolve({ instance: handle.id, entries: [] })
+    };
+
+    const err = await runSplitPhase(scenario, fakeSpec({ A: "ok", B: "ok" }), driver, fakeProxy(), fakeClient([])).catch(
+      (e: unknown) => e
+    );
+
+    expect(stopped).toEqual([]);
+    expect((err as TwinError).code).toBe("E_BOOT_TIMEOUT");
+  });
+});
+
 describe("runSplitPhase teardown", () => {
   it("tears down every instance and returns results when everything succeeds", async () => {
     const { driver, stopped } = fakeDriver({ A: "ok", B: "ok" });

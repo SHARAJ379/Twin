@@ -119,6 +119,32 @@ describe("HttpProxy", () => {
     expect(response).toBe("501");
   });
 
+  it("504s a request its instance never answers, rather than holding the socket open", async () => {
+    // A dedicated proxy: a hung upstream is only interesting against a short
+    // upstream deadline, and the shared one in beforeEach uses the default.
+    const hung = http.createServer(() => {
+      /* accepts the connection, never responds */
+    });
+    await new Promise<void>((resolve) => hung.listen(0, "127.0.0.1", () => resolve()));
+    const address = hung.address();
+    const port = typeof address === "object" && address !== null ? address.port : 0;
+
+    const timeoutProxy = new HttpProxy({ upstreamTimeoutMs: 300 });
+    const started = await timeoutProxy.start(() => [
+      { id: "A", baseUrl: `http://127.0.0.1:${port}`, state: "ready" }
+    ]);
+
+    try {
+      const res = await fetch(`${started.url}/slow`, { signal: AbortSignal.timeout(5000) });
+      expect(res.status).toBe(504);
+      expect(res.headers.get("x-twin-error")).toBe("upstream-timeout");
+    } finally {
+      await timeoutProxy.stop();
+      hung.closeAllConnections();
+      await new Promise((resolve) => hung.close(resolve));
+    }
+  });
+
   it("emits a ProxyEvent per request with instance, status, and timing", async () => {
     const events = proxy.events();
     const collected: unknown[] = [];

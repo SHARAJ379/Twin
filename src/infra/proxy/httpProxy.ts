@@ -9,6 +9,8 @@ import { getFreePort } from "../process/portAllocator.js";
 
 /** Shared with infra/http/httpScenarioClient.ts, which is the one sending this header. */
 export const PIN_HEADER = "x-twin-pin";
+/** Matches the scenario client's own default, so neither side is the silent bottleneck. */
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 30_000;
 const HOP_BY_HOP = new Set([
   "connection",
   "keep-alive",
@@ -23,6 +25,12 @@ const HOP_BY_HOP = new Set([
 export interface HttpProxyOptions {
   /** How long a pinned request waits for its instance to become ready before 503ing. */
   readyTimeoutMs?: number;
+  /**
+   * How long an instance has to answer before the proxy gives up and 504s.
+   * Bounds the proxy independently of the client's own deadline, and makes
+   * sure a hung app can't hold a socket (and the Node event loop) open.
+   */
+  upstreamTimeoutMs?: number;
 }
 
 function filteredHeaders(
@@ -52,12 +60,14 @@ export class HttpProxy implements Proxy {
   private readonly emitter = new EventEmitter();
   private readonly agents = new Map<string, { agent: http.Agent; port: number }>();
   private readonly readyTimeoutMs: number;
+  private readonly upstreamTimeoutMs: number;
   private server: http.Server | undefined;
   private rrCounter = 0;
   private getInstances: () => InstanceHandle[] = () => [];
 
   constructor(options: HttpProxyOptions = {}) {
     this.readyTimeoutMs = options.readyTimeoutMs ?? 5000;
+    this.upstreamTimeoutMs = options.upstreamTimeoutMs ?? DEFAULT_UPSTREAM_TIMEOUT_MS;
   }
 
   async start(instances: () => InstanceHandle[]): Promise<{ url: string }> {
@@ -161,10 +171,28 @@ export class HttpProxy implements Proxy {
         proxyRes.on("end", () => this.emit(method, url, target, proxyRes.statusCode ?? 502, startedAt));
       }
     );
+
+    let timedOut = false;
+    proxyReq.setTimeout(this.upstreamTimeoutMs, () => {
+      timedOut = true;
+      proxyReq.destroy();
+    });
     proxyReq.on("error", () => {
-      if (!res.headersSent) res.writeHead(502, { "X-Twin-Instance": target.id });
+      const status = timedOut ? 504 : 502;
+      if (!res.headersSent) {
+        res.writeHead(status, {
+          "X-Twin-Instance": target.id,
+          ...(timedOut ? { "X-Twin-Error": "upstream-timeout" } : {})
+        });
+      }
       res.end();
-      this.emit(method, url, target, 502, startedAt);
+      this.emit(method, url, target, status, startedAt);
+    });
+    // The client giving up (its own timeout, or Ctrl-C) must take the upstream
+    // request down with it - otherwise the socket, and the app's work behind
+    // it, outlive the request that asked for it.
+    res.on("close", () => {
+      if (!res.writableEnded) proxyReq.destroy();
     });
     req.pipe(proxyReq);
   }

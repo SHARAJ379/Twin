@@ -16,7 +16,7 @@ import { genericStack } from "../../domain/stacks/generic.js";
 import { computeVerdict } from "../../domain/verdict.js";
 import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
 import { loadTwinConfig } from "../../infra/config/loadTwinConfig.js";
-import { HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
+import { DEFAULT_REQUEST_TIMEOUT_MS, HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
 import { HttpProxy } from "../../infra/proxy/httpProxy.js";
 import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
@@ -28,6 +28,7 @@ import { renderMarkdownReport } from "../../report/markdown.js";
 import { buildReportJson } from "../../report/reportJson.js";
 import { renderTerminalReport } from "../../report/terminal.js";
 import { traceFindings } from "../../tracer/traceFindings.js";
+import { onShutdown } from "../shutdown.js";
 
 export interface RunOptions {
   projectDir: string;
@@ -42,6 +43,10 @@ export interface RunOptions {
   healthPath?: string | undefined;
   portEnv?: string | undefined;
   bootTimeoutMs?: number | undefined;
+  /** Per-request deadline for a scenario step. Falls back to config, then DEFAULT_REQUEST_TIMEOUT_MS. */
+  requestTimeoutMs?: number | undefined;
+  /** Extra header names to redact from report evidence. Merged with twin.config.json's "redactHeaders". */
+  redactHeaders?: string[] | undefined;
   env: Record<string, string>;
   keepWorkspaces: boolean;
   /** Bypasses the non-local-database refusal (§9.1, I8). Off by default - this is the single most important safety rule. */
@@ -66,6 +71,14 @@ function formatScenarioErrors(errors: ScenarioParseError[]): string {
 export async function runCommand(options: RunOptions, logger: Logger): Promise<number> {
   const store = new FsArtifactStore(options.projectDir);
   const lock = await store.acquireLock();
+  /**
+   * Set as soon as there is temp state worth removing. Called by the `finally`
+   * below *and* by the signal handler: a run that threw (or was Ctrl-C'd) used
+   * to leave a full copy of the project per instance behind in the temp dir,
+   * and `twin clean` only ever reaped processes, never those.
+   */
+  let teardown: (() => Promise<void>) | undefined;
+  let unregisterShutdown: (() => void) | undefined;
 
   try {
     const config = await loadTwinConfig(options.projectDir);
@@ -108,6 +121,8 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     const healthPath = options.healthPath ?? config?.healthPath ?? DEFAULT_HEALTH_PATH;
     const portEnv = options.portEnv ?? config?.portEnv ?? DEFAULT_PORT_ENV;
     const bootTimeoutMs = options.bootTimeoutMs ?? config?.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
+    const requestTimeoutMs = options.requestTimeoutMs ?? config?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    const redactExtraHeaders = [...(config?.redactHeaders ?? []), ...(options.redactHeaders ?? [])];
     const env = { ...config?.env, ...options.env };
     const allowRemote = options.allowRemote || config?.allowRemote === true;
 
@@ -186,17 +201,35 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     );
     const scenarioClient = new HttpScenarioClient();
     const startSpec = { command: start, build, portEnv, env, healthPath, bootTimeoutMs };
+    const clientOptions = { requestTimeoutMs, redactExtraHeaders };
+
+    teardown = async () => {
+      // Instances first: on Windows a workspace can't be removed while a
+      // process still has its cwd inside it.
+      await instanceDriver.stopAll({ graceMs: 2000 });
+      if (!options.keepWorkspaces) await workspaceManager.cleanup();
+    };
+    unregisterShutdown = onShutdown(async () => {
+      await teardown?.();
+      await lock.release();
+    });
 
     logger.info("CONTROL: running the scenario against one instance alone");
     const control = await runControlPhase(
       scenario,
-      { sourceDir: options.projectDir, link: [...stack.linkDirs], ignore: [...stack.ignoreDirs], start: startSpec },
+      {
+        sourceDir: options.projectDir,
+        link: [...stack.linkDirs],
+        ignore: [...stack.ignoreDirs],
+        start: startSpec,
+        client: clientOptions
+      },
       instanceDriver,
       scenarioClient
     );
 
     logger.info("SPLIT: running the scenario against A + B behind the proxy");
-    const proxy = new HttpProxy();
+    const proxy = new HttpProxy({ upstreamTimeoutMs: requestTimeoutMs });
     const split = await runSplitPhase(
       scenario,
       {
@@ -204,7 +237,8 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
         link: [...stack.linkDirs],
         ignore: [...stack.ignoreDirs],
         start: startSpec,
-        instanceIds: ["A", "B"]
+        instanceIds: ["A", "B"],
+        client: clientOptions
       },
       instanceDriver,
       proxy,
@@ -233,10 +267,21 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     console.log(renderTerminalReport(findings, verdict, PROFILE));
     logger.info("report saved", { dir: run.dir });
 
-    if (!options.keepWorkspaces) await workspaceManager.cleanup();
-
     return computeExitCode(verdict);
   } finally {
+    unregisterShutdown?.();
+    if (teardown !== undefined) {
+      // A messy teardown must never replace the run's own result - or, worse,
+      // mask the error that caused it.
+      try {
+        await teardown();
+      } catch (err) {
+        logger.warn("could not fully clean up this run", {
+          error: err instanceof Error ? err.message : String(err),
+          hint: "Run `twin clean` to reap any leftover processes."
+        });
+      }
+    }
     await lock.release();
   }
 }

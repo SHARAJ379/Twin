@@ -2,13 +2,15 @@ import type { Scenario } from "../domain/scenario.js";
 import { stepsWithoutRestarts } from "../domain/scenarioTransform.js";
 import type { StepResult } from "../domain/stepResult.js";
 import type { InstanceDriver, StartSpec, WorkspaceSpec } from "../ports/instanceDriver.js";
-import type { ScenarioClient } from "../ports/scenarioClient.js";
+import type { ScenarioClient, ScenarioClientOptions } from "../ports/scenarioClient.js";
 
 export interface ControlRunSpec {
   sourceDir: string;
   link: string[];
   ignore: string[];
   start: StartSpec;
+  /** Forwarded verbatim to the scenario client's RunContext. */
+  client?: ScenarioClientOptions;
 }
 
 export interface ControlRunResult {
@@ -43,7 +45,8 @@ export async function runControlPhase(
     const results = await scenarioClient.run(controlScenario, {
       proxyUrl: handle.baseUrl,
       instanceDriver,
-      instances: [handle]
+      instances: [handle],
+      ...spec.client
     });
     return { results };
   } finally {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 
 import { TwinError } from "../domain/errors.js";
 import { stackIds } from "../domain/stacks/index.js";
@@ -11,9 +11,14 @@ import { printDoctorReport, runDoctorChecks } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
 import { reportCommand, type ReportFormat } from "./commands/report.js";
 import { runCommand } from "./commands/run.js";
+import { installShutdownHandlers } from "./shutdown.js";
 
 const logger = new ConsoleLogger();
 const program = new Command();
+
+// Before any command runs: Ctrl-C must stop the instances it started and
+// remove their workspaces, not leave them for `twin clean` to find later.
+installShutdownHandlers(logger);
 
 /** Shared by every action that can throw a TwinError (run, report, ...): sets process.exitCode, never throws. */
 async function runGuarded(action: () => Promise<number>): Promise<void> {
@@ -64,6 +69,21 @@ program
     process.exitCode = 0;
   });
 
+/** Number("abc") is NaN, which would reach AbortSignal.timeout() and fail far from the typo that caused it. */
+function parseMilliseconds(flag: string): (value: string) => number {
+  return (value: string): number => {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) {
+      throw new InvalidArgumentError(`${flag} must be a positive whole number of milliseconds, got "${value}"`);
+    }
+    return parsed;
+  };
+}
+
+function collectFlag(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 function parseEnvFlag(value: string, previous: Record<string, string>): Record<string, string> {
   const eq = value.indexOf("=");
   if (eq === -1) {
@@ -85,7 +105,18 @@ program
   .option("--build <command>", "build command to run once per instance workspace before --start (e.g. for TypeScript/Next.js apps)")
   .option("--health-path <path>", 'path polled for readiness (default "/health")')
   .option("--port-env <name>", 'env var the app reads its port from (default "PORT")')
-  .option("--boot-timeout-ms <ms>", "boot timeout per instance (default 60000)", (v: string) => Number(v))
+  .option("--boot-timeout-ms <ms>", "boot timeout per instance (default 60000)", parseMilliseconds("--boot-timeout-ms"))
+  .option(
+    "--request-timeout-ms <ms>",
+    "deadline for a single scenario request (default 30000) - bounds the whole run so a hung app can't stall it",
+    parseMilliseconds("--request-timeout-ms")
+  )
+  .option(
+    "--redact-header <name>",
+    "also redact this response/request header from the report (repeatable)",
+    collectFlag,
+    []
+  )
   .option("--env <KEY=VALUE>", "extra env var for every instance (repeatable)", parseEnvFlag, {})
   .option("--keep-workspaces", "don't delete the per-instance tmp workspaces on exit", false)
   .option(
@@ -102,6 +133,8 @@ program
     healthPath?: string;
     portEnv?: string;
     bootTimeoutMs?: number;
+    requestTimeoutMs?: number;
+    redactHeader: string[];
     env: Record<string, string>;
     keepWorkspaces: boolean;
     allowRemote: boolean;
@@ -117,6 +150,8 @@ program
           healthPath: opts.healthPath,
           portEnv: opts.portEnv,
           bootTimeoutMs: opts.bootTimeoutMs,
+          requestTimeoutMs: opts.requestTimeoutMs,
+          redactHeaders: opts.redactHeader,
           env: opts.env,
           keepWorkspaces: opts.keepWorkspaces,
           allowRemote: opts.allowRemote

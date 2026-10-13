@@ -99,7 +99,12 @@ async function isPortHeldBySomeoneElse(port: number): Promise<boolean> {
   });
 }
 
-async function pollHealth(baseUrl: string, healthPath: string, timeoutMs: number): Promise<void> {
+async function pollHealth(
+  baseUrl: string,
+  healthPath: string,
+  timeoutMs: number,
+  isAlive?: () => boolean
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {
@@ -109,6 +114,11 @@ async function pollHealth(baseUrl: string, healthPath: string, timeoutMs: number
     } catch (err) {
       lastError = err;
     }
+    // A dead process with nothing answering its port is a crash, not a slow
+    // boot. Waiting out the rest of the deadline - three times over, once per
+    // boot attempt - only delays the same verdict by minutes. Checked after a
+    // failed probe, never before: an app that answers has already returned.
+    if (isAlive !== undefined && !isAlive()) break;
     await sleep(150);
   }
   throw lastError ?? new Error("health check never returned a response");
@@ -175,6 +185,25 @@ export class ProcessInstanceDriver implements InstanceDriver {
     if (handle.pid === undefined) return;
     await killTree(handle.pid, { mode: "graceful", graceMs: opts.graceMs });
     this.running.delete(handle.id);
+    await this.persistPidFile();
+  }
+
+  /**
+   * Stops every instance this driver still has running. Not part of the
+   * InstanceDriver port: it exists for the CLI's signal handler, which has no
+   * handles to pass (they belong to whatever phase was interrupted).
+   *
+   * A pid whose kill failed stays in the pid file on purpose, so `twin clean`
+   * can still find it afterwards.
+   */
+  async stopAll(opts: StopOptions): Promise<void> {
+    const entries = [...this.running.entries()];
+    const outcomes = await Promise.allSettled(
+      entries.map(([, record]) => killTree(record.pid, { mode: "graceful", graceMs: opts.graceMs }))
+    );
+    outcomes.forEach((outcome, index) => {
+      if (outcome.status === "fulfilled") this.running.delete(entries[index]![0]);
+    });
     await this.persistPidFile();
   }
 
@@ -270,7 +299,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
     });
 
     try {
-      await pollHealth(baseUrl, spec.healthPath, spec.bootTimeoutMs);
+      await pollHealth(baseUrl, spec.healthPath, spec.bootTimeoutMs, () => isProcessAlive(pid));
     } catch (err) {
       settled = true;
       // Ask the OS directly rather than trusting our `exited` flag here: the

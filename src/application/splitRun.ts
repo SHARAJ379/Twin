@@ -4,7 +4,7 @@ import type { StepResult } from "../domain/stepResult.js";
 import { diffSnapshots, type WorkspaceDiff } from "../domain/workspaceDiff.js";
 import type { InstanceDriver, InstanceHandle, StartSpec } from "../ports/instanceDriver.js";
 import type { Proxy } from "../ports/proxy.js";
-import type { ScenarioClient } from "../ports/scenarioClient.js";
+import type { ScenarioClient, ScenarioClientOptions } from "../ports/scenarioClient.js";
 
 export interface SplitRunSpec {
   sourceDir: string;
@@ -13,6 +13,8 @@ export interface SplitRunSpec {
   start: StartSpec;
   /** v1: ["A", "B"]; a list so N>2 instances is additive later (§13). */
   instanceIds: string[];
+  /** Forwarded verbatim to the scenario client's RunContext. */
+  client?: ScenarioClientOptions;
 }
 
 export interface SplitRunResult {
@@ -34,9 +36,17 @@ export async function runSplitPhase(
   scenarioClient: ScenarioClient
 ): Promise<SplitRunResult> {
   const instances: InstanceHandle[] = [];
-  for (const instance of spec.instanceIds) {
-    const ws = await instanceDriver.prepare({ instance, sourceDir: spec.sourceDir, link: spec.link, ignore: spec.ignore });
-    instances.push(await instanceDriver.start(ws, spec.start));
+  try {
+    for (const instance of spec.instanceIds) {
+      const ws = await instanceDriver.prepare({ instance, sourceDir: spec.sourceDir, link: spec.link, ignore: spec.ignore });
+      instances.push(await instanceDriver.start(ws, spec.start));
+    }
+  } catch (err) {
+    // B failing to boot used to leave A running, holding its port, with
+    // nothing left holding a handle to it. Tear down whatever did start
+    // before letting the boot failure out.
+    await Promise.allSettled(instances.map((handle) => instanceDriver.stop(handle, { graceMs: 5000 })));
+    throw err;
   }
 
   const before = await Promise.all(instances.map((h) => instanceDriver.snapshot(h)));
@@ -45,7 +55,12 @@ export async function runSplitPhase(
   let result: SplitRunResult | undefined;
   let primaryError: unknown;
   try {
-    const results = await scenarioClient.run(scenario, { proxyUrl: started.url, instanceDriver, instances });
+    const results = await scenarioClient.run(scenario, {
+      proxyUrl: started.url,
+      instanceDriver,
+      instances,
+      ...spec.client
+    });
 
     // `instances` entries may have been replaced in place by a restart step
     // (the scenario client mutates the array) - snapshot whatever is

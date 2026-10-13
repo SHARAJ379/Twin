@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -224,5 +225,78 @@ describe("runCommand twin.config.json and start-command resolution", () => {
 
     expect(TwinError.isTwinError(err)).toBe(true);
     expect((err as TwinError).code).toBe("E_BOOT_CRASH"); // proves scenario+start resolution succeeded; this is just the deliberate crash
+  }, 20_000);
+});
+
+describe("runCommand cleanup", () => {
+  let projectDir: string;
+
+  afterEach(async () => {
+    if (projectDir !== undefined) await rm(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  it("removes the temp workspaces even when the run fails", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-cleanup-"));
+    await writeFile(
+      path.join(projectDir, "scenario.yaml"),
+      "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n",
+      "utf8"
+    );
+
+    const err = await runCommand(
+      {
+        projectDir,
+        scenarioPath: path.join(projectDir, "scenario.yaml"),
+        start: 'node -e "process.exit(1)"',
+        healthPath: "/health",
+        portEnv: "PORT",
+        bootTimeoutMs: 2000,
+        keepWorkspaces: false,
+        allowRemote: false,
+        env: {}
+      },
+      logger
+    ).catch((e: unknown) => e);
+
+    expect((err as TwinError).code).toBe("E_BOOT_CRASH");
+
+    // Cleanup used to live on the success path only, so every failed run left
+    // a full copy of the project per instance behind in the temp dir - and
+    // `twin clean` only ever reaped processes, never those.
+    const runIds = await readdir(path.join(projectDir, ".twin", "runs"));
+    expect(runIds).toHaveLength(1);
+    expect(existsSync(path.join(os.tmpdir(), `twin-${runIds[0]!}`))).toBe(false);
+  }, 20_000);
+
+  it("keeps the temp workspaces when --keep-workspaces is passed, failure or not", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-keepws-"));
+    await writeFile(
+      path.join(projectDir, "scenario.yaml"),
+      "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n",
+      "utf8"
+    );
+
+    const err = await runCommand(
+      {
+        projectDir,
+        scenarioPath: path.join(projectDir, "scenario.yaml"),
+        start: 'node -e "process.exit(1)"',
+        healthPath: "/health",
+        portEnv: "PORT",
+        bootTimeoutMs: 2000,
+        keepWorkspaces: true,
+        allowRemote: false,
+        env: {}
+      },
+      logger
+    ).catch((e: unknown) => e);
+
+    expect((err as TwinError).code).toBe("E_BOOT_CRASH");
+
+    const runIds = await readdir(path.join(projectDir, ".twin", "runs"));
+    const workspaceRoot = path.join(os.tmpdir(), `twin-${runIds[0]!}`);
+    // The flag exists to debug a failure, so a failure is exactly when it has to hold.
+    expect(existsSync(workspaceRoot)).toBe(true);
+    await rm(workspaceRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }, 20_000);
 });

@@ -10,8 +10,23 @@ import { PIN_HEADER } from "../proxy/httpProxy.js";
 import { CookieJar } from "./cookieJar.js";
 import type { RunContext, ScenarioClient } from "../../ports/scenarioClient.js";
 
+/**
+ * Nothing in a scenario may block forever. Without this, an app that accepts
+ * a connection and never answers (or answers with an endless stream, e.g.
+ * text/event-stream) hung `twin run` until CI's own job timeout killed it.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** AbortSignal.timeout() rejects with a DOMException named "TimeoutError" - say what actually happened. */
+function describeRequestError(err: unknown, timeoutMs: number): string {
+  if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+    return `request timed out after ${timeoutMs}ms (raise --request-timeout-ms if the app is just slow)`;
+  }
+  return err instanceof Error ? err.message : String(err);
 }
 
 function makeTemplateHelpers(): TemplateHelpers {
@@ -170,8 +185,10 @@ export class HttpScenarioClient implements ScenarioClient {
     // network error) - all of it must become a StepResult.error, never an
     // exception that crashes the whole run (§7.1: "undefined variable ...
     // at the step, with the variable name in the message").
+    const timeoutMs = ctx.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     let redactedRequest: RedactedRequest | undefined;
     let response: Response;
+    let responseText: string;
     try {
       const rendered = renderTemplateDeep(step.request, variables, helpers) as RequestStep["request"];
       const url = new URL(rendered.path, ctx.proxyUrl);
@@ -191,9 +208,19 @@ export class HttpScenarioClient implements ScenarioClient {
         bodyPreview: redactBody(typeof body === "string" ? body : undefined, ctx.redactExtraHeaders)
       };
 
-      response = await fetch(url, { method: rendered.method, headers, redirect: "manual", ...(body !== undefined ? { body } : {}) });
+      // One signal covers both the fetch and the body read below: a stream
+      // that never ends would otherwise hang in text(), outside any timeout.
+      const signal = AbortSignal.timeout(timeoutMs);
+      response = await fetch(url, {
+        method: rendered.method,
+        headers,
+        redirect: "manual",
+        signal,
+        ...(body !== undefined ? { body } : {})
+      });
+      responseText = await response.text();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = describeRequestError(err, timeoutMs);
       return {
         stepId: step.id,
         startedAt,
@@ -205,7 +232,6 @@ export class HttpScenarioClient implements ScenarioClient {
       };
     }
 
-    const responseText = await response.text();
     const responseHeaders = headersToRecord(response.headers);
     const setCookies = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
     cookieJar.ingest(clientName, setCookies);

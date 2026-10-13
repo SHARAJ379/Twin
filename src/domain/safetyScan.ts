@@ -94,9 +94,13 @@ export interface RemoteResourceRef {
   host: string;
 }
 
+/** URL.hostname keeps brackets around an IPv6 literal ("[::1]"), unlike every other host form. */
+function normalizeHost(hostname: string): string {
+  return hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+}
+
 function isLocalHost(hostname: string): boolean {
-  // URL.hostname keeps brackets around an IPv6 literal ("[::1]"), unlike every other host form.
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const normalized = normalizeHost(hostname);
   return (
     normalized === "localhost" ||
     normalized === "127.0.0.1" ||
@@ -164,12 +168,31 @@ function hostsIn(value: string, allowBareHost: boolean): string[] {
 }
 
 /**
+ * Hosts the user has explicitly vouched for. An entry beginning with a dot is
+ * a domain suffix (`.mongodb.net` covers every shard of a cluster), which is
+ * the difference between allowing one datastore and switching the whole check
+ * off with `--allow-remote`.
+ */
+function isAllowedHost(host: string, allowedHosts: readonly string[]): boolean {
+  const normalized = normalizeHost(host);
+  return allowedHosts.some((entry) => {
+    const allowed = normalizeHost(entry);
+    if (allowed.length === 0) return false;
+    return allowed.startsWith(".") ? normalized === allowed.slice(1) || normalized.endsWith(allowed) : normalized === allowed;
+  });
+}
+
+/**
  * Env vars that look like they point a datastore somewhere non-local - either
  * as a connection URL/DSN or as a split-out `*_HOST`. False negatives here are
  * cheaper than refusing to run on a false positive, so a value that isn't
  * shaped like a connection target at all is skipped rather than guessed at.
  */
-export function scanForRemoteResources(env: Readonly<Record<string, string>>): RemoteResourceRef[] {
+export function scanForRemoteResources(
+  env: Readonly<Record<string, string>>,
+  options: { allowedHosts?: readonly string[] } = {}
+): RemoteResourceRef[] {
+  const allowedHosts = options.allowedHosts ?? [];
   const found: RemoteResourceRef[] = [];
   const seen = new Set<string>();
   for (const [key, value] of Object.entries(env)) {
@@ -178,7 +201,7 @@ export function scanForRemoteResources(env: Readonly<Record<string, string>>): R
     for (const host of hostsIn(value, hostKey)) {
       // A seed list may repeat a host, and two keys may point at the same one -
       // the refusal message reads better without the duplicates.
-      if (isLocalHost(host) || seen.has(`${key}|${host}`)) continue;
+      if (isLocalHost(host) || isAllowedHost(host, allowedHosts) || seen.has(`${key}|${host}`)) continue;
       seen.add(`${key}|${host}`);
       found.push({ key, host });
     }

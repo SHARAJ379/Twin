@@ -1,10 +1,14 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { FsWorkspaceManager } from "./fsWorkspaceManager.js";
+import { diffSnapshots } from "../../domain/workspaceDiff.js";
+import { FULL_HASH_LIMIT, FsWorkspaceManager } from "./fsWorkspaceManager.js";
+
+/** Both snapshots get this exact mtime, so only content can explain a diff. */
+const FROZEN_TIME = new Date(1_700_000_000_000);
 
 describe("FsWorkspaceManager", () => {
   let sourceDir: string;
@@ -96,5 +100,56 @@ describe("FsWorkspaceManager", () => {
       const manager = new FsWorkspaceManager(root);
       expect(await manager.snapshot(path.join(root, "nope"))).toEqual([]);
     });
+
+    it("detects a rewrite that keeps the same size and mtime, which size/mtime comparison could not", async () => {
+      const manager = new FsWorkspaceManager(root);
+      const dir = await manager.cloneForInstance(await manager.preparePristine(sourceDir, { link: [], ignore: [] }), "A");
+      const file = path.join(dir, "data.json");
+
+      await writeFile(file, '{"items":["aaaa"]}');
+      await utimes(file, FROZEN_TIME, FROZEN_TIME);
+      const before = await manager.snapshot(dir);
+
+      // Same byte length, same timestamp - the shape an in-place record update
+      // takes on a filesystem with coarse mtime granularity.
+      await writeFile(file, '{"items":["bbbb"]}');
+      await utimes(file, FROZEN_TIME, FROZEN_TIME);
+      const after = await manager.snapshot(dir);
+
+      const beforeEntry = before.find((e) => e.path === "data.json");
+      const afterEntry = after.find((e) => e.path === "data.json");
+      expect(afterEntry?.size).toBe(beforeEntry?.size);
+      expect(afterEntry?.mtimeMs).toBe(beforeEntry?.mtimeMs);
+      expect(afterEntry?.sha1).not.toBe(beforeEntry?.sha1);
+      expect(diffSnapshots({ instance: "A", entries: before }, { instance: "A", entries: after }).modified).toHaveLength(1);
+    });
+
+    it("fingerprints a file past the full-hash limit by sampling, and marks it as sampled", async () => {
+      const manager = new FsWorkspaceManager(root);
+      const dir = await manager.cloneForInstance(await manager.preparePristine(sourceDir, { link: [], ignore: [] }), "A");
+      const file = path.join(dir, "huge.db");
+
+      // truncate() sizes the file without writing 64MB of bytes.
+      const handle = await open(file, "w");
+      await handle.truncate(FULL_HASH_LIMIT + 4096);
+      await handle.close();
+      await utimes(file, FROZEN_TIME, FROZEN_TIME);
+
+      const before = await manager.snapshot(dir);
+      const entry = before.find((e) => e.path === "huge.db");
+      expect(entry?.sampled).toBe(true);
+      expect(entry?.sha1).toEqual(expect.any(String));
+
+      // A write inside the sampled head is caught by the fingerprint itself,
+      // mtime or no mtime.
+      const head = await open(file, "r+");
+      await head.write(Buffer.from("changed"), 0, 7, 0);
+      await head.close();
+      await utimes(file, FROZEN_TIME, FROZEN_TIME); // so only the fingerprint can explain the diff
+
+      const after = await manager.snapshot(dir);
+      expect(after.find((e) => e.path === "huge.db")?.sha1).not.toBe(entry?.sha1);
+      expect(diffSnapshots({ instance: "A", entries: before }, { instance: "A", entries: after }).modified).toHaveLength(1);
+    }, 60_000);
   });
 });

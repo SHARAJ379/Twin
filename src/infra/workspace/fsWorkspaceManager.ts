@@ -1,13 +1,64 @@
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, readdir, rm, stat, symlink } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { cp, mkdir, open, readdir, rm, stat, symlink } from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import type { InstanceId } from "../../domain/instance.js";
 import type { FileEntry } from "../../domain/workspaceDiff.js";
 import type { WorkspaceManager, WorkspaceOptions } from "../../ports/workspaceManager.js";
 
 const DEFAULT_IGNORE = [".git", ".twin", "node_modules"];
-const SHA1_SIZE_LIMIT = 5 * 1024 * 1024;
+/**
+ * Hashed in full up to here, streamed rather than buffered. Twin's workspaces
+ * are app source plus whatever the app writes - a SQLite file, an upload dir -
+ * with node_modules and .git already excluded, so this covers everything that
+ * matters while keeping a giant fixture from being read end to end four times
+ * a run (before and after, per instance).
+ */
+export const FULL_HASH_LIMIT = 64 * 1024 * 1024;
+/** Above the limit: head, middle and tail, which catches the writes a datastore actually makes. */
+const SAMPLE_CHUNK_BYTES = 256 * 1024;
+
+/** A streamed sha1 - never loads the whole file into memory. */
+async function hashWholeFile(fullPath: string): Promise<string> {
+  const hash = createHash("sha1");
+  await pipeline(createReadStream(fullPath), hash);
+  return hash.digest("hex");
+}
+
+/**
+ * Three chunks plus the size. Not a proof of equality, which is why the entry
+ * is marked `sampled` and the diff treats a match as "no change detected".
+ */
+async function hashSampledFile(fullPath: string, size: number): Promise<string> {
+  const hash = createHash("sha1").update(`size:${size}`);
+  const handle = await open(fullPath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(SAMPLE_CHUNK_BYTES);
+    const offsets = [0, Math.max(0, Math.floor(size / 2) - SAMPLE_CHUNK_BYTES / 2), Math.max(0, size - SAMPLE_CHUNK_BYTES)];
+    for (const offset of offsets) {
+      const { bytesRead } = await handle.read(buffer, 0, SAMPLE_CHUNK_BYTES, offset);
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    await handle.close();
+  }
+  return hash.digest("hex");
+}
+
+async function fingerprint(fullPath: string, size: number): Promise<{ sha1?: string; sampled?: boolean }> {
+  try {
+    return size <= FULL_HASH_LIMIT
+      ? { sha1: await hashWholeFile(fullPath) }
+      : { sha1: await hashSampledFile(fullPath, size), sampled: true };
+  } catch {
+    // Unreadable (locked, vanished, permission) - record the entry without a
+    // hash. The diff reads a missing hash as indeterminate, so the file gets
+    // reported as changed rather than silently assumed identical.
+    return {};
+  }
+}
 
 async function walk(dir: string, baseDir: string, skip: ReadonlySet<string>, out: FileEntry[]): Promise<void> {
   let entries;
@@ -28,10 +79,15 @@ async function walk(dir: string, baseDir: string, skip: ReadonlySet<string>, out
       // node_modules junction itself is walked into as "not a file, not a
       // directory" and silently skipped - exactly what we want, since its
       // contents are shared across instances and not instance-specific state.
-      const stats = await stat(fullPath);
+      let stats;
+      try {
+        stats = await stat(fullPath);
+      } catch {
+        continue; // a temp file the app wrote and removed between readdir and
+        // now: it isn't there to snapshot, and throwing here would fail the run
+      }
       const relativePath = path.relative(baseDir, fullPath).split(path.sep).join("/");
-      const sha1 = stats.size < SHA1_SIZE_LIMIT ? createHash("sha1").update(await readFile(fullPath)).digest("hex") : undefined;
-      out.push({ path: relativePath, size: stats.size, mtimeMs: stats.mtimeMs, sha1 });
+      out.push({ path: relativePath, size: stats.size, mtimeMs: stats.mtimeMs, ...(await fingerprint(fullPath, stats.size)) });
     }
   }
 }

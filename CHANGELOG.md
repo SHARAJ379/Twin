@@ -25,6 +25,9 @@ kind of change each item was, not to imply a version before this one.
 - `results.json` per run - the evidence ledger each finding's `{run, stepId}` pointers
   resolve against, holding every step's request, response and timing from both runs.
 - Named clients: a scenario declares `clients: [alice, bob]` and steps pick one with `as:`.
+- `--allow-remote-host <host>` (config: `allowRemoteHosts`): vouch for one datastore host instead of
+  switching the whole remote-environment check off. A leading dot is a domain suffix, so
+  `.mongodb.net` covers every shard of a cluster.
 - `SECURITY.md` documenting the trust model and vulnerability reporting process; CodeQL,
   Dependabot and an `npm audit` gate in CI.
 - `npm run pack:smoke`: packs the tarball, installs it into a clean project and drives the
@@ -59,7 +62,13 @@ kind of change each item was, not to imply a version before this one.
 
 - The non-local datastore refusal now also reads split-out settings (`DB_HOST`, libpq's
   `PGHOST`, comma-separated seed lists, `jdbc:` URLs), which have no URL to parse and used
-  to sail straight past it.
+  to sail straight past it. The refusal also names which env source set the value, so the
+  fix doesn't start with a guess.
+- YAML alias expansion in a scenario is bounded instead of unlimited, so a mistyped anchor
+  is a parse error rather than an out-of-memory crash.
+- Workspace snapshots hash file contents rather than falling back to size and mtime for
+  large files, which could report an in-place rewrite as unchanged and cost the tracer its
+  evidence.
 - Instance logs are redacted - the run's own secret values, URL credentials and bearer
   tokens - before they reach disk or the boot-failure tail printed to the terminal.
 - The GitHub Action passes its inputs through the environment instead of interpolating them

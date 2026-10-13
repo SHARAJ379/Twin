@@ -225,3 +225,41 @@ describe("parseScenarioYaml client validation", () => {
     expect(parseScenarioYaml(withClients('[""]', "default")).ok).toBe(false);
   });
 });
+
+describe("parseScenarioYaml alias expansion", () => {
+  it("refuses an alias bomb instead of expanding until it runs out of memory", () => {
+    // The classic shape: each level aliases the one below it nine times, so
+    // the expanded document is exponential in the number of levels.
+    const bomb = [
+      "name: boom",
+      "version: 1",
+      "a: &a [x, x, x, x, x, x, x, x, x]",
+      "b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a]",
+      "c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b]",
+      "d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c]",
+      "e: &e [*d, *d, *d, *d, *d, *d, *d, *d, *d]",
+      "steps: [*e]"
+    ].join("\n");
+
+    const result = parseScenarioYaml(bomb);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]?.message).toContain("alias expansion is capped at");
+  });
+
+  it("still allows the reason anchors get used here: one request reused across every step", () => {
+    const steps = Array.from({ length: 40 }, (_, i) =>
+      i === 0
+        ? ["  - id: step0", "    kind: request", "    request: &req { method: GET, path: /health }", "    expect: &exp { status: 200 }"].join(
+            "\n"
+          )
+        : ["  - id: step" + String(i), "    kind: request", "    request: *req", "    expect: *exp"].join("\n")
+    );
+
+    const result = parseScenarioYaml(["name: anchored", "version: 1", "steps:", ...steps].join("\n"));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.scenario.steps).toHaveLength(40);
+  });
+});

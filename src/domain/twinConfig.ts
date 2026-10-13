@@ -12,6 +12,8 @@ export interface TwinConfig {
   requestTimeoutMs?: number;
   env?: Record<string, string>;
   allowRemote?: boolean;
+  /** Hosts allowed individually, instead of switching the whole remote check off. A leading dot is a domain suffix. */
+  allowRemoteHosts?: string[];
   /** Extra header names to redact from report evidence, beyond the built-in list. */
   redactHeaders?: string[];
 }
@@ -26,7 +28,7 @@ export type TwinConfigValidationResult = { ok: true; config: TwinConfig } | { ok
 
 const STRING_FIELDS = ["scenario", "stack", "start", "build", "healthPath", "portEnv"] as const;
 const NUMBER_FIELDS = ["bootTimeoutMs", "requestTimeoutMs"] as const;
-const STRING_ARRAY_FIELDS = ["redactHeaders"] as const;
+const STRING_ARRAY_FIELDS = ["redactHeaders", "allowRemoteHosts"] as const;
 const ALLOWED_KEYS = new Set<string>([...STRING_FIELDS, ...NUMBER_FIELDS, ...STRING_ARRAY_FIELDS, "env", "allowRemote"]);
 
 /** No YAML/ajv here on purpose (cf. domain/jsonPath.ts) - a flat handful of fields doesn't earn the dependency. */

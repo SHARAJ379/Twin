@@ -7,6 +7,7 @@ import { evaluate } from "../../application/evaluate.js";
 import { runSplitPhase } from "../../application/splitRun.js";
 import { builtInChecks } from "../../checks/index.js";
 import type { DeploymentProfile } from "../../domain/deploymentProfile.js";
+import { mergeEnvSources } from "../../domain/envSources.js";
 import { TwinError } from "../../domain/errors.js";
 import { collectSecretEnvValues, createLogRedactor } from "../../domain/logRedaction.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
@@ -52,6 +53,8 @@ export interface RunOptions {
   keepWorkspaces: boolean;
   /** Bypasses the non-local-database refusal (§9.1, I8). Off by default - this is the single most important safety rule. */
   allowRemote: boolean;
+  /** Vouches for specific hosts instead, leaving the check on for everything else. Merged with config's "allowRemoteHosts". */
+  allowRemoteHosts?: string[] | undefined;
 }
 
 const PROFILE: DeploymentProfile = "ephemeral";
@@ -126,22 +129,33 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     const redactExtraHeaders = [...(config?.redactHeaders ?? []), ...(options.redactHeaders ?? [])];
     const env = { ...config?.env, ...options.env };
     const allowRemote = options.allowRemote || config?.allowRemote === true;
+    const allowedHosts = [...(config?.allowRemoteHosts ?? []), ...(options.allowRemoteHosts ?? [])];
 
     // Safety preflight (§9.1/§9.2, I8): scan every env source that would end
     // up inherited by a spawned instance - .env* files, Twin's own process
     // env (instances inherit it), twin.config.json's "env", and --env overrides.
+    // Merged in precedence order, keeping which source won each key, so the
+    // refusal can name the place to go and fix it.
     const dotEnvVars = await loadDotEnvFiles(options.projectDir);
-    const mergedEnv = { ...dotEnvVars, ...process.env, ...env } as Record<string, string>;
+    const { env: mergedEnv, originOf } = mergeEnvSources([
+      { name: "a .env file in the project", vars: dotEnvVars },
+      { name: "this shell's own environment", vars: process.env },
+      { name: 'twin.config.json "env"', vars: config?.env ?? {} },
+      { name: "--env", vars: options.env }
+    ]);
 
-    const remoteRefs = scanForRemoteResources(mergedEnv);
+    const remoteRefs = scanForRemoteResources(mergedEnv, { allowedHosts });
     if (remoteRefs.length > 0 && !allowRemote) {
-      const list = remoteRefs.map((r) => `  ${r.key} -> ${r.host}`).join("\n");
+      const list = remoteRefs.map((r) => `  ${r.key} -> ${r.host}   (set by ${originOf(r.key)})`).join("\n");
+      const hosts = [...new Set(remoteRefs.map((r) => r.host))];
       throw new TwinError(
         "E_UNSAFE_ENV",
         `found what looks like a non-local database/service in the environment:\n${list}`,
         {
-          hint: "Twin would write test users/records into this real database. If that's genuinely fine, pass --allow-remote.",
-          details: { remoteRefs }
+          hint: `Twin would write test users/records into this real database. Point it at a local one, vouch for ${
+            hosts.length === 1 ? "this host" : "these hosts"
+          } with ${hosts.map((host) => `--allow-remote-host ${host}`).join(" ")}, or turn the check off entirely with --allow-remote.`,
+          details: { remoteRefs: remoteRefs.map((ref) => ({ ...ref, source: originOf(ref.key) })) }
         }
       );
     }

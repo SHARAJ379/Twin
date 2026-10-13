@@ -124,6 +124,12 @@ program
     "allow running even if a .env/process env var looks like a non-local database or service (I8) - off by default on purpose",
     false
   )
+  .option(
+    "--allow-remote-host <host>",
+    "vouch for one host instead of turning the whole check off; a leading dot is a domain suffix (repeatable)",
+    collectFlag,
+    []
+  )
   .action(async (opts: {
     scenario?: string;
     project: string;
@@ -138,6 +144,7 @@ program
     env: Record<string, string>;
     keepWorkspaces: boolean;
     allowRemote: boolean;
+    allowRemoteHost: string[];
   }) => {
     await runGuarded(() =>
       runCommand(
@@ -154,7 +161,8 @@ program
           redactHeaders: opts.redactHeader,
           env: opts.env,
           keepWorkspaces: opts.keepWorkspaces,
-          allowRemote: opts.allowRemote
+          allowRemote: opts.allowRemote,
+          allowRemoteHosts: opts.allowRemoteHost
         },
         logger
       )

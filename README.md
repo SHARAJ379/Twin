@@ -177,6 +177,7 @@ All fields are optional:
 | `requestTimeoutMs` | deadline for a single scenario request, in ms                 | `30000`                                 |
 | `env`           | extra env vars for every instance                                | `{}`                                    |
 | `allowRemote`   | allow running even if the environment looks like a real DB/service | `false`                             |
+| `allowRemoteHosts` | hosts vouched for individually; a leading dot is a domain suffix | `[]`                                 |
 | `redactHeaders` | extra header names to redact from the report's evidence          | `[]`                                    |
 
 On Node, start-command detection checks `package.json`'s `scripts` for `start`,
@@ -207,6 +208,10 @@ against both, and writes a report.
 --env <KEY=VALUE>       extra env var for every instance (repeatable)
 --keep-workspaces       don't delete the per-instance tmp workspaces on exit
 --allow-remote          allow running even if the environment looks like a non-local DB/service
+--allow-remote-host <host>
+                        vouch for one host instead, leaving the check on for
+                        everything else; a leading dot is a domain suffix
+                        (`.mongodb.net` covers a whole cluster). Repeatable
 ```
 
 Every wait is bounded: no step can take longer than `--request-timeout-ms`
@@ -298,7 +303,7 @@ outright. The common ones:
 | `E_BOOT_TIMEOUT`, app logs that it started on the wrong port | the app doesn't read `PORT` | `--port-env APP_PORT` |
 | `scenario-ran-as-written` error | a step didn't match its own `expect:` | fix the route/status in `scenario.yaml` - the message names the step and what it got |
 | `No checks ran` | nothing in the scenario is tagged `check:` | tag the step that reads state back via the *other* instance |
-| `E_UNSAFE_ENV` | something in the environment looks like a real database | point it at a local one, or `--allow-remote` if you really mean it |
+| `E_UNSAFE_ENV` | something in the environment looks like a real database | point it at a local one, or vouch for just that host with `--allow-remote-host <host>`. The error names which env source set the value |
 | `E_NO_STACK` | no marker file identifies the project, or the stack is known but its entrypoint isn't | `--start "<command>"` (and `--stack <id>` to get the right tracer rules) |
 | `E_AMBIGUOUS_STACK` | a polyglot repo matches two stacks | `--stack <id>` to say which one serves HTTP |
 | Python `ModuleNotFoundError` on boot | the start command used a `python` without the project's deps | let Twin detect it (it uses `.venv`), or point `--start` at the venv interpreter |
@@ -343,8 +348,10 @@ for the full trust model, and where to report a vulnerability.
 
 Two things are worth knowing up front. Twin refuses to run when the
 environment looks like it points a datastore somewhere non-local - a
-`DATABASE_URL`, a `DB_HOST`, a seed list - because it writes real test data;
-`--allow-remote` is the override. And everything Twin writes down is redacted
+`DATABASE_URL`, a `DB_HOST`, a seed list - because it writes real test data.
+The refusal names the host *and* which of the four env sources set it, and
+`--allow-remote-host <host>` vouches for one without switching the check off
+for everything else (`--allow-remote` does that). And everything Twin writes down is redacted
 first: reports and `results.json` keep an allowlist of headers with cookie
 values masked, and the instance logs (plus the tail printed on a boot failure,
 which lands in CI output) have the run's own secrets, URL credentials and

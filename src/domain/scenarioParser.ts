@@ -21,6 +21,13 @@ export interface ScenarioParseError {
 
 export type ScenarioParseResult = { ok: true; scenario: Scenario } | { ok: false; errors: ScenarioParseError[] };
 
+/**
+ * Weighted alias budget for YAML expansion (the `yaml` library's own default
+ * is 100; this is deliberately roomier, since a scenario legitimately merges
+ * one shared block into every step).
+ */
+const MAX_YAML_ALIAS_BUDGET = 1000;
+
 const ajv = new Ajv({ allErrors: true, strict: true });
 const validateSchema = ajv.compile(scenarioSchema);
 
@@ -83,7 +90,28 @@ export function parseScenarioYaml(yamlText: string, options: { knownInstances?: 
     };
   }
 
-  const data: unknown = doc.toJS({ maxAliasCount: -1 });
+  // Bounded, not disabled. Anchor expansion is multiplicative, so a handful
+  // of nested aliases can expand to gigabytes ("billion laughs") - and an
+  // unbounded limit turns a mistyped anchor into an out-of-memory crash
+  // instead of a parse error. The budget is generous enough for the reason
+  // anchors get used here (a shared block merged into every step) and still
+  // caps expansion. It is not a security boundary: a scenario sits next to a
+  // `start` command Twin runs unsandboxed, so whoever can write one can
+  // already run code (see SECURITY.md).
+  let data: unknown;
+  try {
+    data = doc.toJS({ maxAliasCount: MAX_YAML_ALIAS_BUDGET });
+  } catch (err) {
+    return {
+      ok: false,
+      errors: [
+        {
+          message: `${err instanceof Error ? err.message : String(err)} - alias expansion is capped at ${MAX_YAML_ALIAS_BUDGET}`,
+          path: ""
+        }
+      ]
+    };
+  }
 
   if (!validateSchema(data)) {
     const errors = (validateSchema.errors ?? []).map((err) => ({

@@ -62,6 +62,46 @@ describe("runCommand PREFLIGHT failures", () => {
     expect(TwinError.isTwinError(err)).toBe(true);
     expect((err as TwinError).code).toBe("E_UNSAFE_ENV");
     expect((err as TwinError).message).toContain("db.supabase.co");
+    // Which of the four env sources set it - the message used to leave the
+    // user to guess, and .env is the wrong guess as often as not.
+    expect((err as TwinError).message).toContain(".env file in the project");
+    expect((err as TwinError).hint).toContain("--allow-remote-host db.supabase.co");
+  });
+
+  it("lets a vouched-for host past the preflight without disabling the check entirely", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-preflight-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, trivialScenarioYaml, "utf8");
+    await writeFile(path.join(projectDir, ".env"), "DATABASE_URL=postgres://user:pass@db.supabase.co:5432/postgres\n", "utf8");
+
+    const err = await runCommand(
+      { ...baseOptions, projectDir, scenarioPath, env: {}, allowRemoteHosts: ["db.supabase.co"] },
+      logger
+    ).catch((e: unknown) => e);
+
+    // It gets past PREFLIGHT and fails later for an unrelated reason (there's
+    // no app here to boot) - what matters is that it isn't E_UNSAFE_ENV.
+    expect(TwinError.isTwinError(err) && err.code).not.toBe("E_UNSAFE_ENV");
+  }, 20_000);
+
+  it("still refuses a second host that was not vouched for", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-preflight-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, trivialScenarioYaml, "utf8");
+    await writeFile(
+      path.join(projectDir, ".env"),
+      "DATABASE_URL=postgres://user:pass@db.supabase.co:5432/postgres\nREDIS_URL=redis://cache.upstash.io:6379\n",
+      "utf8"
+    );
+
+    const err = await runCommand(
+      { ...baseOptions, projectDir, scenarioPath, env: {}, allowRemoteHosts: ["db.supabase.co"] },
+      logger
+    ).catch((e: unknown) => e);
+
+    expect((err as TwinError).code).toBe("E_UNSAFE_ENV");
+    expect((err as TwinError).message).toContain("cache.upstash.io");
+    expect((err as TwinError).message).not.toContain("db.supabase.co");
   });
 
   it("rejects with E_UNSAFE_ENV for a remote DB var passed via --env too, not just .env files", async () => {

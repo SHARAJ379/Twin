@@ -112,6 +112,33 @@ describe("scanForRemoteResources", () => {
     expect(found).toEqual([]);
   });
 
+  it("lets an explicitly vouched-for host through while still checking the rest", () => {
+    const found = scanForRemoteResources(
+      { DATABASE_URL: "postgres://user:pass@allowed.example.com/app", REDIS_URL: "redis://other.example.com:6379" },
+      { allowedHosts: ["allowed.example.com"] }
+    );
+    expect(found).toEqual([{ key: "REDIS_URL", host: "other.example.com" }]);
+  });
+
+  it("treats a leading dot as a domain suffix, so a whole cluster takes one entry", () => {
+    const found = scanForRemoteResources(
+      { MONGODB_URI: "mongodb://a.cluster0.mongodb.net:27017,b.cluster0.mongodb.net:27017/app" },
+      { allowedHosts: [".mongodb.net"] }
+    );
+    expect(found).toEqual([]);
+  });
+
+  it("matches a vouched host case-insensitively but never by partial name", () => {
+    expect(scanForRemoteResources({ DB_HOST: "Prod.Example.COM" }, { allowedHosts: ["prod.example.com"] })).toEqual([]);
+    // "example.com" must not vouch for "evil-example.com" or a subdomain.
+    expect(scanForRemoteResources({ DB_HOST: "evil-example.com" }, { allowedHosts: ["example.com"] })).toHaveLength(1);
+    expect(scanForRemoteResources({ DB_HOST: "sub.example.com" }, { allowedHosts: ["example.com"] })).toHaveLength(1);
+  });
+
+  it("ignores an empty allowlist entry rather than vouching for everything", () => {
+    expect(scanForRemoteResources({ DB_HOST: "prod.example.com" }, { allowedHosts: ["", "  "] })).toHaveLength(1);
+  });
+
   it("does not flag a unix socket path or an ambient HOSTNAME", () => {
     const found = scanForRemoteResources({
       HOSTNAME: "fv-az1234-567", // set on every Linux CI runner

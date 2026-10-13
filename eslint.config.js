@@ -13,5 +13,12 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
       "no-console": "off"
     }
+  },
+  {
+    // Plain Node ESM tooling, outside the TypeScript program - so `no-undef`
+    // actually applies here (typescript-eslint disables it for .ts, where the
+    // compiler knows the globals) and has to be told what Node provides.
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: { console: "readonly", process: "readonly" } }
   }
 );

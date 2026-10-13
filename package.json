@@ -30,6 +30,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
+    "pack:smoke": "node scripts/packSmoke.mjs",
     "test:watch": "vitest",
     "lint": "eslint .",
     "depcheck": "depcruise src --config .dependency-cruiser.cjs",

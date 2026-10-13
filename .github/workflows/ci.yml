@@ -41,5 +41,28 @@ jobs:
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run lint
       - run: npm run depcheck
+      # Not covered by `npm run build`, which compiles src/ only - and until
+      # recently not covered by anything, since tests/ fell outside every
+      # tsconfig's include.
+      - run: npm run typecheck
       - run: npm run build
       - run: npm test
+
+  # A green suite says nothing about publishability: it runs against the
+  # working tree, with devDependencies present. This packs the tarball,
+  # installs it into a clean project, and drives the installed binary - the
+  # shape of check that caught the stale-dist and broken-prepublish bugs by
+  # hand before. Both shims matter, so both OSes run it.
+  package:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run pack:smoke

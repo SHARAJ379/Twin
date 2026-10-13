@@ -1,7 +1,18 @@
-// What actually ships: the same compiler settings, minus the tests.
-// tsconfig.json still type-checks tests (via `npm run typecheck`) - they just
-// don't belong in dist/ or in the published tarball.
 {
+  // What actually ships: emits from src/ only. rootDir has to be narrowed back
+  // to src here - the base config widens it to the repo root so tests/ can be
+  // type-checked, and inheriting that would emit to dist/src/... and move the
+  // `twin` binary out from under package.json's "bin".
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "noEmit": false,
+    // The tarball ships dist/ only, so a plain source map would point at .ts
+    // files that aren't there - dead weight that makes a user's stack trace
+    // look resolvable when it isn't. Embedding the source makes the maps
+    // self-contained, and a reported trace lands on the real line.
+    "inlineSources": true
+  },
+  "include": ["src"],
   "exclude": ["node_modules", "dist", "examples", "src/**/*.test.ts", "tests"]
 }

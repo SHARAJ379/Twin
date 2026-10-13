@@ -10,7 +10,9 @@ export const scenarioSchema = {
   properties: {
     version: { const: 1 },
     name: { type: "string", minLength: 1 },
-    clients: { type: "array", items: { type: "string" } },
+    // Declaring a client is what makes `as:` checkable - a typo there would
+    // otherwise silently open a brand-new empty cookie jar (§7.1).
+    clients: { type: "array", items: { type: "string", minLength: 1 }, uniqueItems: true },
     steps: { type: "array", minItems: 1, items: { $ref: "#/$defs/step" } }
   },
   $defs: {

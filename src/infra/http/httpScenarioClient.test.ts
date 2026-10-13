@@ -90,6 +90,23 @@ describe("HttpScenarioClient request timeout", () => {
     expect(result?.error?.message).toContain("--request-timeout-ms");
   });
 
+  it("honours redactExtraHeaders, the RunContext field nothing used to populate", async () => {
+    const url = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json", "x-api-token": "sk_live_abc123" });
+      res.end("{}");
+    });
+
+    const [result] = await new HttpScenarioClient().run(oneStep(), {
+      proxyUrl: url,
+      instanceDriver: driver,
+      instances: [],
+      redactExtraHeaders: ["X-API-Token"] // matched case-insensitively, like every header
+    });
+
+    expect(result?.response?.headers["x-api-token"]).toBe("<redacted>");
+    expect(JSON.stringify(result)).not.toContain("sk_live_abc123");
+  });
+
   it("leaves a request that answers in time completely unaffected", async () => {
     const url = await listen((_req, res) => {
       res.writeHead(200, { "content-type": "application/json" });

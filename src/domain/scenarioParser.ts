@@ -105,6 +105,9 @@ function checkSemantics(scenario: Scenario, knownInstances: string[], doc: Docum
   const errors: ScenarioParseError[] = [];
   const idsSoFar = new Set<string>();
   const validVia = new Set([...knownInstances, "any"]);
+  // "default" is the jar a step gets when it doesn't ask for one, so it never
+  // needs declaring.
+  const declaredClients = new Set(["default", ...(scenario.clients ?? [])]);
 
   for (let index = 0; index < scenario.steps.length; index++) {
     const step = scenario.steps[index]!;
@@ -120,6 +123,16 @@ function checkSemantics(scenario: Scenario, knownInstances: string[], doc: Docum
           message: `"via: ${step.via}" is not a known instance (expected one of ${[...validVia].join(", ")})`,
           path: `${stepPath}/via`,
           ...locate(doc, `${stepPath}/via`, source)
+        });
+      }
+      if (step.as !== undefined && !declaredClients.has(step.as)) {
+        errors.push({
+          message:
+            scenario.clients === undefined
+              ? `"as: ${step.as}" is not a declared client - add a top-level \`clients: ["${step.as}"]\`. An undeclared client is almost always a typo, and a typo here sends the request with no cookies at all rather than failing`
+              : `"as: ${step.as}" is not one of the scenario's declared clients (${[...declaredClients].join(", ")})`,
+          path: `${stepPath}/as`,
+          ...locate(doc, `${stepPath}/as`, source)
         });
       }
       for (const dep of step.after ?? []) {

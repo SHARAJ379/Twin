@@ -44,7 +44,17 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
     const twinDir = path.join(brokenExpressDir, ".twin");
     twinDirsToClean.push(twinDir);
     const exitCode = await runCommand(
-      { ...baseOptions, projectDir: brokenExpressDir, scenarioPath: path.join(brokenExpressDir, "scenario.yaml"), env: {} },
+      {
+        ...baseOptions,
+        projectDir: brokenExpressDir,
+        scenarioPath: path.join(brokenExpressDir, "scenario.yaml"),
+        env: {},
+        // Express always sends this header, and it is not on the evidence
+        // allowlist - so it is the cheapest end-to-end proof that
+        // --redact-header reaches the scenario client at all (it used to be a
+        // RunContext field nothing ever populated).
+        redactHeaders: ["x-powered-by"]
+      },
       logger
     );
     expect(exitCode).toBe(1);
@@ -52,13 +62,34 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
     const latestId = await readFile(path.join(twinDir, "latest"), "utf8");
     const report = JSON.parse(await readFile(path.join(twinDir, "runs", latestId, "report.json"), "utf8")) as {
       verdict: { failed: number };
-      findings: { checkId: string; status: string; suspects: unknown[] }[];
+      findings: { checkId: string; status: string; suspects: unknown[]; evidence: { run: "control" | "split"; stepId: string }[] }[];
     };
     expect(report.verdict.failed).toBe(4);
     // At least the two file-backed checks (file-consistency, restart-persistence)
     // must get real tracer evidence, not just an empty suspects list.
     expect(report.findings.every((f) => f.status === "fail")).toBe(true);
     expect(report.findings.some((f) => f.suspects.length > 0)).toBe(true);
+
+    // Every finding's evidence is a pointer ({run, stepId}); results.json is
+    // what those pointers point at. Without it on disk, a report referenced
+    // evidence nobody could open.
+    const ledger = JSON.parse(await readFile(path.join(twinDir, "runs", latestId, "results.json"), "utf8")) as {
+      schemaVersion: number;
+      control: { stepId: string; response?: { headers: Record<string, string> } }[];
+      split: { stepId: string }[];
+    };
+    expect(ledger.schemaVersion).toBe(1);
+    expect(ledger.control.length).toBeGreaterThan(0);
+    expect(ledger.split.length).toBeGreaterThan(0);
+    for (const finding of report.findings) {
+      for (const ref of finding.evidence) {
+        expect(ledger[ref.run].some((result) => result.stepId === ref.stepId)).toBe(true);
+      }
+    }
+
+    const headersSeen = ledger.control.flatMap((result) => Object.entries(result.response?.headers ?? {}));
+    expect(headersSeen.some(([name]) => name === "x-powered-by")).toBe(true);
+    expect(headersSeen.filter(([name]) => name === "x-powered-by").every(([, value]) => value === "<redacted>")).toBe(true);
   }, 150_000);
 
   it("PASSes all four checks against examples/fixed-express, given shared session secret/data/upload paths", async () => {

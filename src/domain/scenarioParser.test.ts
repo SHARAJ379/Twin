@@ -180,3 +180,48 @@ steps:
     expect(result.ok).toBe(true);
   });
 });
+
+describe("parseScenarioYaml client validation", () => {
+  const withClients = (clients: string | undefined, as: string): string =>
+    [
+      "name: s",
+      "version: 1",
+      ...(clients === undefined ? [] : [`clients: ${clients}`]),
+      "steps:",
+      "  - id: login",
+      `    kind: request`,
+      `    as: ${as}`,
+      "    request: { method: GET, path: / }"
+    ].join("\n");
+
+  it("accepts an `as` that the scenario declares in `clients`", () => {
+    const result = parseScenarioYaml(withClients("[alice, bob]", "alice"));
+    expect(result.ok).toBe(true);
+  });
+
+  it('always accepts `as: default`, which is the jar a step gets anyway', () => {
+    expect(parseScenarioYaml(withClients(undefined, "default")).ok).toBe(true);
+  });
+
+  it("rejects an `as` that is not in the declared `clients` - the typo that silently sent no cookies", () => {
+    const result = parseScenarioYaml(withClients("[alice, bob]", "alcie"));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]?.path).toBe("/steps/0/as");
+    expect(result.errors[0]?.message).toContain('"as: alcie"');
+    expect(result.errors[0]?.message).toContain("alice, bob");
+    expect(result.errors[0]?.line).toBe(7);
+  });
+
+  it("rejects an `as` when the scenario declares no clients at all, and says how to declare one", () => {
+    const result = parseScenarioYaml(withClients(undefined, "alice"));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors[0]?.message).toContain('clients: ["alice"]');
+  });
+
+  it("rejects a duplicated or empty client name", () => {
+    expect(parseScenarioYaml(withClients("[alice, alice]", "alice")).ok).toBe(false);
+    expect(parseScenarioYaml(withClients('[""]', "default")).ok).toBe(false);
+  });
+});

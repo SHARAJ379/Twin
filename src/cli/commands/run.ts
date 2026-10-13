@@ -23,6 +23,7 @@ import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
 import { detectStack } from "../../infra/stack/detectStack.js";
 import { FsWorkspaceManager } from "../../infra/workspace/fsWorkspaceManager.js";
 import type { Logger } from "../../ports/logger.js";
+import { buildEvidenceLedger } from "../../report/evidenceLedger.js";
 import { computeExitCode } from "../../report/exitCode.js";
 import { renderMarkdownReport } from "../../report/markdown.js";
 import { buildReportJson } from "../../report/reportJson.js";
@@ -260,6 +261,14 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
 
     const reportJson = buildReportJson({ scenarioName: scenario.name, profile: PROFILE, findings, verdict });
     await writeFile(store.pathFor(run, "report.json"), JSON.stringify(reportJson, null, 2), "utf8");
+    // The evidence each finding points at. Already redacted on the way in
+    // (domain/redaction.ts), which is what makes it safe to write down.
+    const ledger = buildEvidenceLedger({
+      scenarioName: scenario.name,
+      controlResults: control.results,
+      splitResults: split.results
+    });
+    await writeFile(store.pathFor(run, "results.json"), JSON.stringify(ledger, null, 2), "utf8");
     await writeFile(store.pathFor(run, "report.md"), renderMarkdownReport(scenario.name, findings, verdict, PROFILE), "utf8");
     await store.writeLatestPointer(run);
     await store.pruneOldRuns(10);

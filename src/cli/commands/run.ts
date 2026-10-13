@@ -8,6 +8,7 @@ import { runSplitPhase } from "../../application/splitRun.js";
 import { builtInChecks } from "../../checks/index.js";
 import type { DeploymentProfile } from "../../domain/deploymentProfile.js";
 import { TwinError } from "../../domain/errors.js";
+import { collectSecretEnvValues, createLogRedactor } from "../../domain/logRedaction.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
 import { scanForRemoteResources, scanForThirdPartyKeys } from "../../domain/safetyScan.js";
 import type { StackProfile } from "../../domain/stack.js";
@@ -172,11 +173,16 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
 
     const run = await store.createRun();
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));
+    // Instances inherit this environment, so these are exactly the secrets
+    // their own output could echo - into the log files and into the boot-failure
+    // tail Twin prints to the terminal (and therefore into CI logs).
+    const redactLogLine = createLogRedactor(collectSecretEnvValues(mergedEnv));
     const instanceDriver = new ProcessInstanceDriver(
       workspaceManager,
       logger,
       store.pathFor(run, "pids.json"),
-      store.pathFor(run, "logs")
+      store.pathFor(run, "logs"),
+      redactLogLine
     );
     const scenarioClient = new HttpScenarioClient();
     const startSpec = { command: start, build, portEnv, env, healthPath, bootTimeoutMs };

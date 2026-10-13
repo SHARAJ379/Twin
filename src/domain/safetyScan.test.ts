@@ -57,6 +57,70 @@ describe("scanForRemoteResources", () => {
     });
     expect(found).toHaveLength(2);
   });
+
+  it("flags a split-out host setting, which has no URL to parse", () => {
+    const found = scanForRemoteResources({ DB_HOST: "prod-db.example.com", DB_USER: "app", DB_PASSWORD: "hunter2" });
+    expect(found).toEqual([{ key: "DB_HOST", host: "prod-db.example.com" }]);
+  });
+
+  it("flags libpq's glued PGHOST", () => {
+    expect(scanForRemoteResources({ PGHOST: "prod.db.example.com" })).toEqual([
+      { key: "PGHOST", host: "prod.db.example.com" }
+    ]);
+  });
+
+  it("flags a host setting that carries a port", () => {
+    expect(scanForRemoteResources({ MYSQL_HOST: "db.example.com:3306" })).toEqual([
+      { key: "MYSQL_HOST", host: "db.example.com" }
+    ]);
+  });
+
+  it("flags every host in a comma-separated seed list, deduplicated", () => {
+    const found = scanForRemoteResources({ KAFKA_BOOTSTRAP_SERVERS: "b1.example.com:9092,b2.example.com:9092,b1.example.com:9092" });
+    expect(found).toEqual([
+      { key: "KAFKA_BOOTSTRAP_SERVERS", host: "b1.example.com" },
+      { key: "KAFKA_BOOTSTRAP_SERVERS", host: "b2.example.com" }
+    ]);
+  });
+
+  it("flags a jdbc connection string", () => {
+    expect(scanForRemoteResources({ DATABASE_URL: "jdbc:postgresql://db.example.com:5432/app" })).toEqual([
+      { key: "DATABASE_URL", host: "db.example.com" }
+    ]);
+  });
+
+  it("does not flag a local or container-local host setting", () => {
+    const found = scanForRemoteResources({
+      DB_HOST: "localhost",
+      REDIS_HOST: "127.0.0.1",
+      MONGO_HOST: "host.docker.internal",
+      MYSQL_HOST: "db.local"
+    });
+    expect(found).toEqual([]);
+  });
+
+  it("does not read a bare word as a hostname - it's usually a service or database name", () => {
+    // `DB_HOST=postgres` is a docker-compose service name; DATABASE_NAME and
+    // REDIS_PASSWORD are not hosts at all. Guessing here would refuse to run
+    // on a perfectly local setup, which is worse than missing one.
+    const found = scanForRemoteResources({
+      DB_HOST: "postgres",
+      DATABASE_NAME: "myapp",
+      REDIS_PASSWORD: "s3cret",
+      DB_SERVER: "mssql"
+    });
+    expect(found).toEqual([]);
+  });
+
+  it("does not flag a unix socket path or an ambient HOSTNAME", () => {
+    const found = scanForRemoteResources({
+      HOSTNAME: "fv-az1234-567", // set on every Linux CI runner
+      HOST: "runner.internal.example.com",
+      PGHOST_DIR: "/var/run/postgresql",
+      DATABASE_URL: "/var/run/postgresql/.s.PGSQL.5432"
+    });
+    expect(found).toEqual([]);
+  });
 });
 
 describe("scanForThirdPartyKeys", () => {

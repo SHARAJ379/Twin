@@ -20,6 +20,7 @@ import type { WorkspaceManager } from "../../ports/workspaceManager.js";
 import { isProcessAlive } from "./isProcessAlive.js";
 import { killTree } from "./killTree.js";
 import { LogRingBuffer } from "./logRingBuffer.js";
+import { createLogSink, type LogSink } from "./logSink.js";
 import type { PidRecord } from "./pidFile.js";
 import { writePidFile } from "./pidFile.js";
 import { getFreePort } from "./portAllocator.js";
@@ -40,25 +41,22 @@ interface RunningInstance {
   startedAt: string;
 }
 
-/**
- * Captures an instance's output twice over: an in-memory tail for the
- * `logTail` on a boot failure, and (when a log dir is configured) a file the
- * user can still read after the run.
- */
-interface LogSink extends LogTail {
-  write(chunk: Buffer): void;
-  close(): void;
-}
-
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Runs `build` to completion in `dir` before the app is started. Rejects with TwinError("E_BUILD_FAILED") on a non-zero exit. */
-async function runBuild(dir: string, build: string | undefined, instance: string): Promise<void> {
+async function runBuild(
+  dir: string,
+  build: string | undefined,
+  instance: string,
+  redactLine?: (line: string) => string
+): Promise<void> {
   if (build === undefined) return;
 
-  const logs = new LogRingBuffer();
+  // Redacted like any other captured output: a failing build prints the
+  // environment it was given more often than an app does.
+  const logs = createLogSink({ redactLine });
   await new Promise<void>((resolve, reject) => {
     const child = spawn(build, { cwd: dir, shell: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     child.stdout?.on("data", (chunk: Buffer) => logs.write(chunk));
@@ -127,24 +125,23 @@ export class ProcessInstanceDriver implements InstanceDriver {
     /** When set, pids.json is rewritten after every spawn/stop so `twin clean` can reap orphans (§7.3). */
     private readonly pidFilePath?: string,
     /** When set, each instance's output is also written to `<logDir>/<instance>.log`, readable after the run. */
-    private readonly logDir?: string
+    private readonly logDir?: string,
+    /**
+     * Strips secrets from every captured log line before it reaches memory,
+     * disk, or a boot-failure's `logTail` (which Twin prints to the terminal).
+     */
+    private readonly redactLogLine?: (line: string) => string
   ) {}
 
   private openLogSink(instance: string): LogSink {
-    const buffer = new LogRingBuffer();
-    if (this.logDir === undefined) {
-      return { lines: (n) => buffer.lines(n), write: (chunk) => buffer.write(chunk), close: () => undefined };
-    }
+    if (this.logDir === undefined) return createLogSink({ redactLine: this.redactLogLine });
+
     mkdirSync(this.logDir, { recursive: true });
     const stream = createWriteStream(path.join(this.logDir, `${instance}.log`), { flags: "a" });
-    return {
-      lines: (n) => buffer.lines(n),
-      write: (chunk) => {
-        buffer.write(chunk);
-        stream.write(chunk);
-      },
-      close: () => stream.end()
-    };
+    return createLogSink({
+      redactLine: this.redactLogLine,
+      file: { write: (text) => stream.write(text), end: () => stream.end() }
+    });
   }
 
   async prepare(spec: WorkspaceSpec): Promise<PreparedWorkspace> {
@@ -158,7 +155,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
   }
 
   async start(ws: PreparedWorkspace, spec: StartSpec): Promise<InstanceHandle> {
-    await runBuild(ws.dir, spec.build, ws.instance);
+    await runBuild(ws.dir, spec.build, ws.instance, this.redactLogLine);
 
     let lastErr: unknown;
     for (let attempt = 1; attempt <= MAX_BOOT_ATTEMPTS; attempt++) {
@@ -194,7 +191,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
     const dir =
       opts.disk === "fresh" ? await this.workspaceManager.cloneForInstance(prepared.pristineDir, handle.id) : prior.dir;
     // A fresh clone needs its own build output; "keep" reuses prior.dir, which was already built by start().
-    if (opts.disk === "fresh") await runBuild(dir, prior.startSpec.build, handle.id);
+    if (opts.disk === "fresh") await runBuild(dir, prior.startSpec.build, handle.id, this.redactLogLine);
 
     return this.spawnOnce({ instance: handle.id, dir }, prior.startSpec);
   }
@@ -252,7 +249,9 @@ export class ProcessInstanceDriver implements InstanceDriver {
 
     child.stdout?.on("data", (chunk: Buffer) => logs.write(chunk));
     child.stderr?.on("data", (chunk: Buffer) => logs.write(chunk));
-    child.once("exit", () => logs.close());
+    // 'close', not 'exit': the child's exit can precede its pipes draining, so
+    // closing on 'exit' both truncates the log and writes to an ended stream.
+    child.once("close", () => logs.close());
 
     const pid = child.pid;
     if (pid === undefined) {

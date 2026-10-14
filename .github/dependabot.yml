@@ -7,6 +7,13 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: "development"
+    ignore:
+      # typescript-eslint 8.x caps its typescript peer at <6.1.0, so a major
+      # typescript bump lands in the dev-dependencies group as an unresolvable
+      # install (ERESOLVE) that fails every job before a single test runs.
+      # Drop this once typescript-eslint supports the next typescript major.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "npm"
     directory: "/examples/broken-express"
     schedule:

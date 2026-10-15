@@ -129,3 +129,41 @@ describe("HttpScenarioClient request timeout", () => {
     expect(result?.response?.status).toBe(200);
   });
 });
+
+describe("HttpScenarioClient cookie handling", () => {
+  it("sends a path-scoped cookie on a later step whose path carries a query string", async () => {
+    // The cookie jar matches Path= against the request path, so it has to be
+    // given the *path*, not the raw scenario string: "/cart?coupon=X" never
+    // path-matches Path=/cart, and the session cookie silently goes unsent -
+    // which Twin would then report as a divergence the app never had.
+    const sawCookie: (string | undefined)[] = [];
+    const url = await listen((req, res) => {
+      const path = req.url ?? "/";
+      if (path.startsWith("/login")) {
+        res.writeHead(200, { "set-cookie": "sid=abc123; Path=/cart" });
+        res.end();
+        return;
+      }
+      sawCookie.push(req.headers.cookie);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+
+    const scenario: Scenario = {
+      name: "s",
+      version: 1,
+      steps: [
+        { kind: "request", id: "login", request: { method: "GET", path: "/login" } },
+        { kind: "request", id: "cart", request: { method: "GET", path: "/cart?coupon=SAVE10" } }
+      ]
+    };
+    await new HttpScenarioClient().run(scenario, {
+      proxyUrl: url,
+      instanceDriver: driver,
+      instances: [],
+      requestTimeoutMs: 5000
+    });
+
+    expect(sawCookie).toEqual(["sid=abc123"]);
+  });
+});

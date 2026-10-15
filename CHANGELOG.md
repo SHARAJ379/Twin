@@ -25,6 +25,9 @@ kind of change each item was, not to imply a version before this one.
 - `results.json` per run - the evidence ledger each finding's `{run, stepId}` pointers
   resolve against, holding every step's request, response and timing from both runs.
 - Named clients: a scenario declares `clients: [alice, bob]` and steps pick one with `as:`.
+- Step-level `retries` and `settleMs`, for a read-back whose write isn't readable the
+  instant it returns. A step runs `retries + 1` times and stops at the first attempt whose
+  expectations pass; `settleMs` waits between attempts only.
 - `--allow-remote-host <host>` (config: `allowRemoteHosts`): vouch for one datastore host instead of
   switching the whole remote-environment check off. A leading dot is a domain suffix, so
   `.mongodb.net` covers every shard of a cluster.

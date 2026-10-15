@@ -47,6 +47,13 @@ module.exports = {
     }
   ],
   options: {
+    // Resolve dependencies but never traverse into them. Without this the
+    // cruise walked ~170 modules of vitest's own dist, which cost time and -
+    // because `no-circular` is declared `from: {}`, i.e. everything - meant a
+    // cycle inside somebody else's package would fail Twin's architecture
+    // check. The layer rules below all match `^src/...` on both ends, so
+    // nothing they enforce is lost by not following.
+    doNotFollow: { path: "node_modules" },
     tsPreCompilationDeps: true,
     tsConfig: { fileName: "tsconfig.json" },
     enhancedResolveOptions: { exportsFields: ["exports"], conditionNames: ["import", "require", "node", "default"] },

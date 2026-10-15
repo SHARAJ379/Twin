@@ -21,6 +21,20 @@ describe("renderTemplate", () => {
   it("leaves text with no template markers untouched", () => {
     expect(renderTemplate("plain text", {}, helpers)).toBe("plain text");
   });
+
+  it("treats an inherited Object property name as undefined, not as a value", () => {
+    // `variables` is a plain object literal, so a plain [name] lookup finds
+    // Object.prototype members: {{toString}} used to render a function's source
+    // and {{__proto__}} "[object Object]", instead of the error a scenario typo
+    // is supposed to get.
+    for (const name of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+      expect(() => renderTemplate(`{{${name}}}`, {}, helpers)).toThrow(TemplateVariableError);
+    }
+  });
+
+  it("still renders an own property that shadows an Object member", () => {
+    expect(renderTemplate("{{toString}}", { toString: "shadowed" }, helpers)).toBe("shadowed");
+  });
 });
 
 describe("renderTemplateDeep", () => {

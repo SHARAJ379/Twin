@@ -194,7 +194,11 @@ export class HttpScenarioClient implements ScenarioClient {
       const url = new URL(rendered.path, ctx.proxyUrl);
 
       const headers: Record<string, string> = { ...rendered.headers };
-      const cookieHeader = cookieJar.headerFor(clientName, rendered.path);
+      // url.pathname, not rendered.path: the jar path-matches against Path=,
+      // and a scenario path carrying a query string ("/cart?coupon=X") never
+      // matches Path=/cart - the cookie would go unsent and Twin would report
+      // a divergence the app never had.
+      const cookieHeader = cookieJar.headerFor(clientName, url.pathname);
       if (cookieHeader !== undefined) headers["cookie"] = cookieHeader;
       if (step.via !== undefined && step.via !== "any") headers[PIN_HEADER] = step.via;
 

@@ -24,6 +24,11 @@ export function renderTemplate(input: string, variables: Readonly<Record<string,
     if (name === "uuid") return helpers.uuid();
     if (name === "now") return helpers.now();
 
+    // hasOwn, not a plain lookup: `variables` is a plain object, so {{toString}}
+    // and {{__proto__}} would otherwise resolve to inherited Object members and
+    // render a function's source or "[object Object]" instead of telling the
+    // user the variable doesn't exist.
+    if (!Object.hasOwn(variables, name)) throw new TemplateVariableError(name);
     const value = variables[name];
     if (value === undefined) throw new TemplateVariableError(name);
     return value;

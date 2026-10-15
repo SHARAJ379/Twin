@@ -103,6 +103,38 @@ Tag a `request` step with `check: <id>` to assert multi-instance behavior:
 A step that fails one of these gets a ready-to-paste fix prompt in the report, and
 Twin's tracer tries to point at the likely file/line in your source.
 
+### Retrying a step that needs a moment (`retries` / `settleMs`)
+
+Some writes aren't readable the instant the write returns - a queue, a cache
+write-behind, an `fsync` that hasn't landed. A read-back step that races one of
+those fails for a reason that has nothing to do with multi-instance behavior, so
+two optional fields let the step wait instead:
+
+```yaml
+- id: read-back
+  kind: request
+  via: B
+  request: { method: GET, path: "/notes/{{noteId}}" }
+  expect: { status: 200 }
+  check: data-consistency
+  retries: 3 # re-send up to 3 more times while the expectations keep failing
+  settleMs: 250 # wait this long between attempts
+```
+
+A step is attempted `retries + 1` times and stops at the first attempt whose
+expectations pass, so a passing step costs nothing. `settleMs` only applies
+*between* attempts - it never delays the first one. Both default to 0.
+
+Reach for these only when the delay is real: they make a genuinely broken app
+take `retries + 1` times longer to fail, and a check that only passes on the
+third try is worth reading as a result in itself.
+
+One sharp edge: every attempt re-renders the step, so `{{unique}}`, `{{uuid}}`
+and `{{now}}` produce **fresh** values each time. On a read-back step that
+interpolates a saved variable (`{{noteId}}`) a retry is identical and safe; on a
+step that *creates* something with `{{unique}}`, each attempt creates a separate
+record. Put `retries` on the read, not the write.
+
 ## Language support
 
 Twin checks behavior over HTTP, so the engine is language-agnostic. What each

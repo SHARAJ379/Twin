@@ -14,6 +14,17 @@ updates:
       # Drop this once typescript-eslint supports the next typescript major.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
+      # dependency-cruiser 18 requires node ^22||^24||>=26, but this package
+      # supports node >= 20 and CI verifies on 20, so the major breaks the
+      # depcheck step on half the matrix. Drop this once node 20 is dropped.
+      - dependency-name: "dependency-cruiser"
+        update-types: ["version-update:semver-major"]
+      # commander 15 requires node >=22.12, but commander is a runtime
+      # dependency and this package advertises node >= 20, so the major would
+      # hand every node 20 user an EBADENGINE on install. Drop this once node
+      # 20 is dropped.
+      - dependency-name: "commander"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "npm"
     directory: "/examples/broken-express"
     schedule:

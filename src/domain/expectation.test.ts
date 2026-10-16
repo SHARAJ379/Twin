@@ -47,4 +47,50 @@ describe("evaluateExpectation", () => {
     );
     expect(result.failures).toHaveLength(2);
   });
+
+  /**
+   * The comparison used to be JSON.stringify on both sides, which depends on
+   * key order - so an app that emitted its fields in a different order than
+   * the scenario listed them failed a check it should have passed, and under
+   * Twin that reads as a multi-instance bug.
+   */
+  it("matches a jsonPath object regardless of key order", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.user": { name: "Ada", id: 1 } } },
+      { status: 200, body: { user: { id: 1, name: "Ada" } } }
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it("matches nested objects and arrays regardless of key order", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.items": [{ b: 2, a: 1 }] } },
+      { status: 200, body: { items: [{ a: 1, b: 2 }] } }
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it("still fails on a genuinely different value", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.user": { name: "Ada", id: 1 } } },
+      { status: 200, body: { user: { id: 2, name: "Ada" } } }
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it("still fails when a key is missing, not merely reordered", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.user": { name: "Ada", id: 1 } } },
+      { status: 200, body: { user: { name: "Ada" } } }
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it("does not treat an array as equal to an object with the same indexes", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.v": ["a"] } },
+      { status: 200, body: { v: { 0: "a" } } }
+    );
+    expect(result.passed).toBe(false);
+  });
 });

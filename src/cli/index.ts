@@ -87,7 +87,10 @@ function collectFlag(value: string, previous: string[]): string[] {
 function parseEnvFlag(value: string, previous: Record<string, string>): Record<string, string> {
   const eq = value.indexOf("=");
   if (eq === -1) {
-    throw new Error(`--env expects KEY=VALUE, got "${value}"`);
+    // InvalidArgumentError, not Error: commander catches this one and prints
+    // the usage error with the flag's name, where a plain Error escapes as an
+    // unhandled rejection with a stack trace over a typo.
+    throw new InvalidArgumentError(`--env expects KEY=VALUE, got "${value}"`);
   }
   return { ...previous, [value.slice(0, eq)]: value.slice(eq + 1) };
 }

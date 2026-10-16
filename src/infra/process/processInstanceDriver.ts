@@ -27,6 +27,9 @@ import { getFreePort } from "./portAllocator.js";
 
 const MAX_BOOT_ATTEMPTS = 3;
 
+/** How long a boot failure waits for the child's stdio to drain before giving up on its log tail. */
+const LOG_DRAIN_TIMEOUT_MS = 500;
+
 /** What prepare() produced for an instance - needed later by restart(). */
 interface PreparedRecord {
   pristineDir: string;
@@ -280,7 +283,27 @@ export class ProcessInstanceDriver implements InstanceDriver {
     child.stderr?.on("data", (chunk: Buffer) => logs.write(chunk));
     // 'close', not 'exit': the child's exit can precede its pipes draining, so
     // closing on 'exit' both truncates the log and writes to an ended stream.
-    child.once("close", () => logs.close());
+    let stdioClosed = false;
+    const stdioDrained = new Promise<void>((resolve) => {
+      child.once("close", () => {
+        stdioClosed = true;
+        logs.close();
+        resolve();
+      });
+    });
+
+    /**
+     * A boot failure's whole value is the log tail - it's the app's own
+     * account of why it died, and Twin prints it to the terminal. The exit is
+     * observable before the pipes have drained, though, so reading the tail
+     * the instant the process is gone could return nothing at all and leave
+     * the failure undiagnosable. Bounded, because a child that never closes
+     * its stdio must not hang the run.
+     */
+    const awaitLogs = async (): Promise<void> => {
+      if (stdioClosed) return;
+      await Promise.race([stdioDrained, sleep(LOG_DRAIN_TIMEOUT_MS)]);
+    };
 
     const pid = child.pid;
     if (pid === undefined) {
@@ -298,6 +321,22 @@ export class ProcessInstanceDriver implements InstanceDriver {
       exitInfo = `exit code ${code ?? "null"}, signal ${signal ?? "null"}`;
     });
 
+    // Recorded here, before the health poll, not after it. The poll can take
+    // the whole boot timeout (three attempts of up to 60s), and an instance
+    // registered only on success was invisible for that entire window: Ctrl-C
+    // in the middle of it found nothing in `running` to stop and nothing in
+    // pids.json either, so the process group outlived the run and `twin clean`
+    // couldn't see it to reap it. A booting process is exactly as much of a
+    // liability as a ready one.
+    this.running.set(ws.instance, { pid, dir: ws.dir, logs, startSpec: spec, startedAt: new Date().toISOString() });
+    await this.persistPidFile();
+
+    /** Every boot failure below has already killed the process - drop the record with it. */
+    const forgetInstance = async (): Promise<void> => {
+      this.running.delete(ws.instance);
+      await this.persistPidFile();
+    };
+
     try {
       await pollHealth(baseUrl, spec.healthPath, spec.bootTimeoutMs, () => isProcessAlive(pid));
     } catch (err) {
@@ -307,6 +346,8 @@ export class ProcessInstanceDriver implements InstanceDriver {
       // so reading it right now would be a race.
       const alreadyDead = !isProcessAlive(pid);
       if (!alreadyDead) await killTree(pid, { mode: "crash", graceMs: 0 });
+      await forgetInstance();
+      await awaitLogs();
 
       if (spawnError !== undefined) {
         throw new TwinError(
@@ -357,6 +398,8 @@ export class ProcessInstanceDriver implements InstanceDriver {
 
     if (exited || spawnError !== undefined) {
       settled = true;
+      await forgetInstance();
+      await awaitLogs();
       throw new TwinError(
         "E_BOOT_CRASH",
         `Instance ${ws.instance} exited right after reporting healthy (${exitInfo}).`,
@@ -365,8 +408,6 @@ export class ProcessInstanceDriver implements InstanceDriver {
     }
 
     settled = true;
-    this.running.set(ws.instance, { pid, dir: ws.dir, logs, startSpec: spec, startedAt: new Date().toISOString() });
-    await this.persistPidFile();
     return { id: ws.instance, baseUrl, pid, state: "ready" };
   }
 

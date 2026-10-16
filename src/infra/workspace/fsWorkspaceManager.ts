@@ -95,6 +95,14 @@ async function walk(dir: string, baseDir: string, skip: ReadonlySet<string>, out
 interface PristineRecord {
   sourceDir: string;
   options: WorkspaceOptions;
+  /**
+   * Project-relative paths of every directory that has to be linked rather
+   * than copied - at whatever depth it was found, not just the root. A
+   * monorepo or npm-workspaces project has a `node_modules` per package, and
+   * the copy filter drops all of them by name; linking only the root one back
+   * left those packages without their dependencies, so the app couldn't boot.
+   */
+  linkPaths: string[];
 }
 
 /**
@@ -115,19 +123,45 @@ export class FsWorkspaceManager implements WorkspaceManager {
     if (cached) return cached;
 
     const dest = path.join(this.root, "pristine", path.basename(resolvedSource));
-    const skip = new Set([...DEFAULT_IGNORE, ...options.ignore, ...options.link]);
+    const ignore = new Set([...DEFAULT_IGNORE, ...options.ignore]);
+    const link = new Set(options.link);
+    // Collected during the copy rather than by a second walk: the filter
+    // already visits every path, and cp never descends into one it rejects -
+    // so a node_modules nested inside another is never reported.
+    const linkPaths: string[] = [];
 
     await mkdir(dest, { recursive: true });
     await cp(resolvedSource, dest, {
       recursive: true,
-      filter: (source) => !skip.has(path.basename(source))
+      filter: (source) => {
+        const name = path.basename(source);
+        if (link.has(name)) {
+          linkPaths.push(path.relative(resolvedSource, source));
+          return false;
+        }
+        return !ignore.has(name);
+      }
     });
 
     this.pristineBySource.set(resolvedSource, dest);
-    this.recordsByPristine.set(dest, { sourceDir: resolvedSource, options });
+    this.recordsByPristine.set(dest, { sourceDir: resolvedSource, options, linkPaths });
     return dest;
   }
 
+  /**
+   * A *clean* copy of the pristine tree. The directory is removed first, which
+   * is the whole contract: `restart` with `disk: "fresh"` clones over the same
+   * path, and this used to copy into whatever was already there. Files the app
+   * had created at runtime - a SQLite database, a JSON store, an upload -
+   * aren't in the pristine tree, so nothing overwrote them and they survived
+   * the "fresh" restart. restart-persistence then passed for an app that keeps
+   * its data in a runtime-created file, which is exactly the app it exists to
+   * fail.
+   *
+   * Removing the directory can't reach outside it: the link entries are
+   * junctions/symlinks, and `fs.rm` unlinks those rather than following them,
+   * so the real project's node_modules is never touched (proved by a test).
+   */
   async cloneForInstance(pristineDir: string, instance: InstanceId): Promise<string> {
     const record = this.recordsByPristine.get(pristineDir);
     if (!record) {
@@ -135,13 +169,20 @@ export class FsWorkspaceManager implements WorkspaceManager {
     }
 
     const dest = path.join(this.root, instance);
+    // Same retries as cleanup(): a just-killed instance can still hold a
+    // handle inside its old workspace for a few ms on Windows.
+    await rm(dest, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     await mkdir(dest, { recursive: true });
     await cp(pristineDir, dest, { recursive: true });
 
-    for (const name of record.options.link) {
-      const target = path.join(record.sourceDir, name);
-      const linkPath = path.join(dest, name);
+    for (const relativePath of record.linkPaths) {
+      const target = path.join(record.sourceDir, relativePath);
+      const linkPath = path.join(dest, relativePath);
       try {
+        // A nested link (packages/web/node_modules) needs its parent to exist;
+        // the parent is in the pristine tree, but only if it held something
+        // else worth copying.
+        await mkdir(path.dirname(linkPath), { recursive: true });
         await symlink(target, linkPath, process.platform === "win32" ? "junction" : "dir");
       } catch {
         // Nothing at `target` to link (e.g. the project has no node_modules yet) - fine, skip it.

@@ -35,3 +35,34 @@ export function mergeEnvSources(sources: readonly EnvSource[]): MergedEnv {
 
   return { env, originOf: (key) => origins.get(key) ?? "the environment" };
 }
+
+/**
+ * Every declared (key, value) pair from every source, each tagged with where
+ * it came from - nothing overwritten.
+ *
+ * mergeEnvSources is right for deciding what an instance will see, but wrong
+ * to hand a safety scan: the merge keeps one value per key, so the scan only
+ * ever sees the winner. A committed `.env.example` holding
+ * `DATABASE_URL=localhost` therefore used to hide a real production URL in
+ * `.env` - the scan found nothing remote and Twin wrote test traffic into the
+ * real database, which is the one thing it promises never to do.
+ */
+export function collectEnvCandidates(sources: readonly EnvSource[]): { key: string; value: string; source: string }[] {
+  const out: { key: string; value: string; source: string }[] = [];
+  const seen = new Set<string>();
+
+  for (const source of sources) {
+    for (const [key, value] of Object.entries(source.vars)) {
+      if (value === undefined) continue;
+      // Two files declaring the same key the same way is one candidate, but
+      // the first source to declare it is the one named: scanning is ordered
+      // the way the sources are, so that's the most upstream place to fix.
+      const dedupeKey = `${key}=${value}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      out.push({ key, value, source: source.name });
+    }
+  }
+
+  return out;
+}

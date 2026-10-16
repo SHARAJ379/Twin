@@ -9,6 +9,63 @@ shift between minor versions.
 
 ### Fixed
 
+- The safety preflight can no longer be switched off by a committed file. Every `.env*` file
+  was merged into one map with later files overwriting earlier ones, so a `localhost`
+  placeholder in `.env.example` replaced a real `DATABASE_URL` in `.env`: the scan found
+  nothing remote and Twin would have written test users and records into the production
+  database, which is the one thing it promises never to do. Template files nothing loads
+  (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`) are no longer read at all, and
+  the scan now looks at every value every source declares rather than at one winner per key -
+  losing a merge is not a way out of being scanned. The refusal names the exact file.
+- Secrets in form-encoded bodies no longer reach `report.json` and `results.json`. Only JSON
+  bodies were masked, so `email=a&password=hunter2` - an HTML form login, and the most likely
+  first step in any scenario - was written to disk verbatim under a "safe to paste" promise.
+  Field names are matched by word rather than by exact name, so `access_token`, `accessToken`,
+  `refreshToken`, `apiKey`, `client_secret` and `password_confirmation` are masked too; they
+  all used to come through in the clear. `author`, `keyword` and `tokenizer_version` are left
+  alone, because an over-masked body is evidence nobody can read.
+- A `disk: fresh` restart now gets a genuinely clean disk. The clone copied the pristine tree
+  *into* whatever was already in the instance's directory, so a file the app created at
+  runtime - a SQLite database, a JSON store, an upload - was not in the pristine tree, nothing
+  overwrote it, and it survived the restart. `restart-persistence` therefore passed for an app
+  that keeps its data in a runtime-created file, which is exactly the app it exists to fail.
+- `PWD` is no longer treated as a secret. It is in essentially every shell environment and its
+  value is the current directory, so Twin masked the project path out of every log line
+  mentioning it - including `cannot open <redacted>/data.db`, the boot-failure diagnosis the
+  log tail exists to deliver. `DB_PWD` and `MYSQL_PWD` are still secrets.
+- Every `Set-Cookie` of a response is recorded, not just the last. `Headers.forEach` yields
+  `set-cookie` once per cookie, so collecting them into a map by name kept one: a login that
+  sets a session cookie and a CSRF cookie recorded one of them, and `save: header:set-cookie`
+  and the evidence ledger both lost the rest. The cookie jar was always correct.
+- Ctrl-C during boot no longer leaks the instance. A spawned process was recorded only after it
+  passed its health check - up to three attempts of a 60s timeout later - so for that whole
+  window it was in neither `stopAll`'s list nor `pids.json`, and an interrupt left it running
+  where `twin clean` could not see it to reap it.
+- Two `twin run`s started at the same moment can no longer both take the project lock. The lock
+  file was read and then written, and both runs read the same empty path; it is an exclusive
+  create now, so one wins and the other is told who holds it.
+- A boot failure's log tail waits (briefly, bounded) for the app's output to drain. A process
+  can be observed dead before its pipes are read, so the tail could come back empty and leave
+  the failure undiagnosable - which also made the test for it flaky.
+- Dependency directories are linked at every depth, not only at the project root. The copy
+  filter drops every directory named `node_modules`/`vendor` wherever it is, so an
+  npm-workspaces or monorepo package was left with no dependencies at all and the app could
+  not boot.
+- `killTree` no longer gives up on a process group whose leader has already exited. A start
+  command like `npm start` can die while the server it spawned keeps running and keeps the
+  port; the early return left exactly that process alive.
+- `$.items[]` is now rejected as the typo it is, instead of resolving to index 0 (`Number("")`
+  is 0), which quietly saved the first element and looked like it worked. An index must be a
+  plain integer.
+- A `jsonPath:` expectation compares values structurally instead of by `JSON.stringify`, which
+  depended on key order - an app emitting its fields in a different order than the scenario
+  listed them failed a check it should have passed, and under Twin that reads as a
+  multi-instance bug.
+- Two cookies that share a name but differ by `Path` are both kept, rather than the second
+  evicting the first.
+- A malformed `--env` value is reported as a usage error naming the flag, not as an unhandled
+  plain `Error` with a stack trace.
+
 - The tracer finds suspects in CRLF files again - which is every file in a Windows checkout,
   since git converts line endings on the way out (`core.autocrlf`). Lines were split on a bare
   newline, leaving a carriage return at the end of each one, and that defeated every rule

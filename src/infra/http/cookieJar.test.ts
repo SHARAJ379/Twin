@@ -49,4 +49,35 @@ describe("CookieJar", () => {
     const jar = new CookieJar();
     expect(jar.headerFor("ghost", "/")).toBeUndefined();
   });
+
+  /**
+   * Name and path together identify a cookie. Keyed on the name alone, a
+   * path-scoped cookie evicted the site-wide one of the same name, so a
+   * scenario that touched `/admin` silently lost the session it was holding.
+   */
+  it("keeps two cookies that share a name but differ by path", () => {
+    const jar = new CookieJar();
+    jar.ingest("default", ["sid=root-session; Path=/", "sid=admin-session; Path=/admin"]);
+
+    expect(jar.headerFor("default", "/profile")).toBe("sid=root-session");
+    // Both apply under /admin, and neither has been thrown away.
+    const underAdmin = jar.headerFor("default", "/admin/users");
+    expect(underAdmin).toContain("sid=root-session");
+    expect(underAdmin).toContain("sid=admin-session");
+  });
+
+  it("still replaces a cookie when the name and the path both match", () => {
+    const jar = new CookieJar();
+    jar.ingest("default", ["sid=first; Path=/"]);
+    jar.ingest("default", ["sid=second; Path=/"]);
+    expect(jar.headerFor("default", "/")).toBe("sid=second");
+  });
+
+  it("expires only the matching path's cookie", () => {
+    const jar = new CookieJar();
+    jar.ingest("default", ["sid=root; Path=/", "sid=admin; Path=/admin"]);
+    jar.ingest("default", ["sid=gone; Path=/admin; Max-Age=0"]);
+
+    expect(jar.headerFor("default", "/admin")).toBe("sid=root");
+  });
 });

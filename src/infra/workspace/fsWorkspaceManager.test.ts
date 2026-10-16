@@ -152,4 +152,70 @@ describe("FsWorkspaceManager", () => {
       expect(diffSnapshots({ instance: "A", entries: before }, { instance: "A", entries: after }).modified).toHaveLength(1);
     }, 60_000);
   });
+
+  describe("a re-clone is a clean disk", () => {
+    /**
+     * What `restart` with `disk: "fresh"` depends on. The clone used to copy
+     * the pristine tree *into* whatever was already at the destination, so a
+     * file the app created at runtime - a SQLite db, a JSON store - was not in
+     * the pristine tree, nothing overwrote it, and it survived. An app that
+     * keeps its data in a runtime-created file then passed restart-persistence,
+     * which is precisely the app that check exists to fail.
+     */
+    it("removes files the app created at runtime", async () => {
+      const manager = new FsWorkspaceManager(root);
+      const pristineDir = await manager.preparePristine(sourceDir, { link: ["node_modules"], ignore: [] });
+
+      const first = await manager.cloneForInstance(pristineDir, "A");
+      await writeFile(path.join(first, "runtime.db"), "rows the app wrote");
+      await mkdir(path.join(first, "uploads"), { recursive: true });
+      await writeFile(path.join(first, "uploads", "avatar.png"), "bytes");
+
+      const second = await manager.cloneForInstance(pristineDir, "A");
+
+      expect(second).toBe(first); // same path, as restart relies on
+      await expect(readFile(path.join(second, "runtime.db"), "utf8")).rejects.toThrow();
+      await expect(readFile(path.join(second, "uploads", "avatar.png"), "utf8")).rejects.toThrow();
+      // and the project's own files are still there
+      expect(await readFile(path.join(second, "server.js"), "utf8")).toBe("console.log('hi')");
+    });
+
+    /**
+     * The clone removes its destination, and the destination contains a
+     * junction to the real project's node_modules. If that removal ever
+     * followed the link instead of unlinking it, Twin would delete the user's
+     * actual dependencies - the one thing it promises never to touch (I2).
+     */
+    it("never deletes through the dependency link into the real project", async () => {
+      const manager = new FsWorkspaceManager(root);
+      const pristineDir = await manager.preparePristine(sourceDir, { link: ["node_modules"], ignore: [] });
+
+      await manager.cloneForInstance(pristineDir, "A");
+      await manager.cloneForInstance(pristineDir, "A");
+
+      expect(await readFile(path.join(sourceDir, "node_modules", "dep", "index.js"), "utf8")).toBe("module.exports = {}");
+    });
+  });
+
+  /**
+   * npm workspaces and monorepos have a node_modules per package. The copy
+   * filter drops every one of them by name, so linking only the root one back
+   * left the nested packages with no dependencies at all and the app couldn't
+   * boot.
+   */
+  it("links a nested dependency directory, not just the one at the root", async () => {
+    await mkdir(path.join(sourceDir, "packages", "web", "node_modules", "left-pad"), { recursive: true });
+    await writeFile(path.join(sourceDir, "packages", "web", "node_modules", "left-pad", "index.js"), "module.exports = 1");
+    await writeFile(path.join(sourceDir, "packages", "web", "app.js"), "require('left-pad')");
+
+    const manager = new FsWorkspaceManager(root);
+    const pristineDir = await manager.preparePristine(sourceDir, { link: ["node_modules"], ignore: [] });
+    const dir = await manager.cloneForInstance(pristineDir, "A");
+
+    const nested = path.join(dir, "packages", "web", "node_modules");
+    expect((await lstat(nested)).isSymbolicLink()).toBe(true);
+    expect(await readFile(path.join(nested, "left-pad", "index.js"), "utf8")).toBe("module.exports = 1");
+    // the package's own source still came through as a copy
+    expect(await readFile(path.join(dir, "packages", "web", "app.js"), "utf8")).toBe("require('left-pad')");
+  });
 });

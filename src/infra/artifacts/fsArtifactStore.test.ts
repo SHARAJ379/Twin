@@ -75,6 +75,31 @@ describe("FsArtifactStore", () => {
     await lock.release();
   });
 
+  /**
+   * The lock used to read the path and then write it, so two runs starting at
+   * the same moment both saw no lock and both took it - sharing one `.twin/`
+   * and racing on pids.json and the run directory. The exclusive create is
+   * what makes exactly one of them win.
+   */
+  it("lets exactly one of two simultaneous acquires win", async () => {
+    const store = new FsArtifactStore(projectDir);
+
+    const outcomes = await Promise.allSettled([store.acquireLock(), store.acquireLock(), store.acquireLock()]);
+    const won = outcomes.filter((o) => o.status === "fulfilled");
+    const lost = outcomes.filter((o) => o.status === "rejected");
+
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(2);
+    for (const outcome of lost) {
+      expect(TwinError.isTwinError((outcome as PromiseRejectedResult).reason)).toBe(true);
+      expect(((outcome as PromiseRejectedResult).reason as TwinError).code).toBe("E_LOCKED");
+    }
+
+    await (won[0] as PromiseFulfilledResult<{ release: () => Promise<void> }>).value.release();
+    // and the lock is genuinely free again afterwards
+    await (await store.acquireLock()).release();
+  });
+
   it("reclaims a lock left behind by a dead pid", async () => {
     const store = new FsArtifactStore(projectDir);
     const lockPath = path.join(projectDir, ".twin", "lock");

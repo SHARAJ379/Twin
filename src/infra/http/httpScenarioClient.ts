@@ -38,11 +38,31 @@ function makeTemplateHelpers(): TemplateHelpers {
   };
 }
 
-function headersToRecord(headers: Headers): Record<string, string> {
-  const out: Record<string, string> = {};
+/**
+ * `Headers.forEach` yields `set-cookie` once per cookie, so assigning each one
+ * into a map by name keeps only the last - a login that sets a session cookie
+ * and a CSRF cookie recorded one of them. `getSetCookie()` is the only API
+ * that returns them all, which is why it exists; the cookie jar already used
+ * it, so the jar was right while the evidence ledger and `save: header:` were
+ * quietly dropping cookies.
+ */
+function headersToRecord(headers: Headers): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
   headers.forEach((value, key) => {
-    out[key] = value;
+    if (key.toLowerCase() !== "set-cookie") out[key] = value;
   });
+
+  const setCookie = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : [];
+  if (setCookie.length > 0) out["set-cookie"] = setCookie;
+  return out;
+}
+
+/** One string per header, for the lookups that want a plain value (`save: header:x`). */
+function flattenHeaders(headers: Record<string, string | string[]>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    out[key] = Array.isArray(value) ? value.join(", ") : value;
+  }
   return out;
 }
 
@@ -237,8 +257,9 @@ export class HttpScenarioClient implements ScenarioClient {
     }
 
     const responseHeaders = headersToRecord(response.headers);
-    const setCookies = typeof response.headers.getSetCookie === "function" ? response.headers.getSetCookie() : [];
-    cookieJar.ingest(clientName, setCookies);
+    const flatHeaders = flattenHeaders(responseHeaders);
+    const rawSetCookie = responseHeaders["set-cookie"];
+    cookieJar.ingest(clientName, Array.isArray(rawSetCookie) ? rawSetCookie : []);
 
     let parsedBody: unknown;
     try {
@@ -253,7 +274,7 @@ export class HttpScenarioClient implements ScenarioClient {
     if (step.save !== undefined) {
       for (const [varName, spec] of Object.entries(step.save)) {
         try {
-          saved[varName] = evaluateSaveExpression(spec, parsedBody, responseHeaders);
+          saved[varName] = evaluateSaveExpression(spec, parsedBody, flatHeaders);
         } catch (err) {
           expectationResult.failures.push(err instanceof Error ? err.message : String(err));
         }
@@ -268,7 +289,7 @@ export class HttpScenarioClient implements ScenarioClient {
 
     return {
       stepId: step.id,
-      instanceServed: responseHeaders["x-twin-instance"],
+      instanceServed: flatHeaders["x-twin-instance"],
       startedAt,
       durationMs: Date.now() - startedAt,
       request: redactedRequest,

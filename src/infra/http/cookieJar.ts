@@ -45,6 +45,16 @@ function parseSetCookie(header: string): StoredCookie | undefined {
 }
 
 /**
+ * Name *and* path identify a cookie (RFC 6265 §5.3 also includes domain,
+ * which is always 127.0.0.1 here). Keying on the name alone made
+ * `sid=...; Path=/admin` evict `sid=...; Path=/`, so a scenario that touched
+ * a scoped path lost the session cookie it had been holding.
+ */
+function storageKey(cookie: StoredCookie): string {
+  return JSON.stringify([cookie.name, cookie.path]);
+}
+
+/**
  * One cookie store per named client ("as:" in a scenario step) - §6.7.
  * HttpOnly is ignored on purpose: it only restricts browser-side JS, not
  * whether the cookie gets sent, which is all a scenario runner cares about.
@@ -59,11 +69,12 @@ export class CookieJar {
     for (const header of setCookieHeaders) {
       const cookie = parseSetCookie(header);
       if (cookie === undefined) continue;
+      const key = storageKey(cookie);
       if (cookie.expiresAt !== undefined && cookie.expiresAt <= now) {
-        jar.delete(cookie.name);
+        jar.delete(key);
         continue;
       }
-      jar.set(cookie.name, cookie);
+      jar.set(key, cookie);
     }
   }
 

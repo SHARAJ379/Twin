@@ -18,13 +18,26 @@ async function sleep(ms: number): Promise<void> {
  * pid signals the whole group); on Windows, `taskkill /T` walks the tree for us.
  */
 export async function killTree(pid: number, options: KillTreeOptions): Promise<void> {
-  if (!isProcessAlive(pid)) return;
-
   if (process.platform === "win32") {
+    // taskkill /T walks the tree from a live parent, so a dead leader leaves
+    // nothing to walk - Windows reparents orphans and there is no group to
+    // signal. Nothing to do here.
+    if (!isProcessAlive(pid)) return;
     spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
     return;
   }
 
+  // Deliberately NOT short-circuiting on a dead leader. The leader is a
+  // process-group leader (`detached: true`), and a group outlives it: a start
+  // command like `npm start` or `sh -c "python app.py"` exits or dies while
+  // the server it spawned keeps running and keeps the port. Returning early
+  // because the leader was gone left exactly that server alive.
+  //
+  // The group id is the dead leader's pid, so there is a theoretical window
+  // where the OS has recycled that pid onto an unrelated new group leader.
+  // It's a far smaller risk than leaking the app under test: these pids are
+  // seconds old and signalled immediately, while the alternative leaks a
+  // process holding a port for as long as the machine is up.
   if (options.mode === "crash") {
     safeKillGroup(pid, "SIGKILL");
   } else {
@@ -33,9 +46,11 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
     while (Date.now() < deadline && isProcessAlive(pid)) {
       await sleep(50);
     }
-    if (isProcessAlive(pid)) {
-      safeKillGroup(pid, "SIGKILL");
-    }
+    // Unconditional, where it used to be guarded by `isProcessAlive(pid)`:
+    // with the leader already gone that guard was false, so a group whose
+    // leader had exited got a SIGTERM and nothing else. SIGKILL to a group
+    // that has fully drained is a no-op.
+    safeKillGroup(pid, "SIGKILL");
   }
 
   // A signal being sent isn't the same as the OS having reaped the process -

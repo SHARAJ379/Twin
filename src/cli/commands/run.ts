@@ -7,11 +7,11 @@ import { evaluate } from "../../application/evaluate.js";
 import { runSplitPhase } from "../../application/splitRun.js";
 import { builtInChecks } from "../../checks/index.js";
 import type { DeploymentProfile } from "../../domain/deploymentProfile.js";
-import { mergeEnvSources } from "../../domain/envSources.js";
+import { collectEnvCandidates, mergeEnvSources } from "../../domain/envSources.js";
 import { TwinError } from "../../domain/errors.js";
 import { collectSecretEnvValues, createLogRedactor } from "../../domain/logRedaction.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
-import { scanForRemoteResources, scanForThirdPartyKeys } from "../../domain/safetyScan.js";
+import { scanEnvCandidatesForRemoteResources, scanForThirdPartyKeys } from "../../domain/safetyScan.js";
 import type { StackProfile } from "../../domain/stack.js";
 import { genericStack } from "../../domain/stacks/generic.js";
 import { computeVerdict } from "../../domain/verdict.js";
@@ -136,17 +136,21 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     // env (instances inherit it), twin.config.json's "env", and --env overrides.
     // Merged in precedence order, keeping which source won each key, so the
     // refusal can name the place to go and fix it.
-    const dotEnvVars = await loadDotEnvFiles(options.projectDir);
-    const { env: mergedEnv, originOf } = mergeEnvSources([
-      { name: "a .env file in the project", vars: dotEnvVars },
+    const dotEnvFiles = await loadDotEnvFiles(options.projectDir);
+    const envSources = [
+      ...dotEnvFiles.map((file) => ({ name: `${file.name} in the project`, vars: file.vars })),
       { name: "this shell's own environment", vars: process.env },
       { name: 'twin.config.json "env"', vars: config?.env ?? {} },
       { name: "--env", vars: options.env }
-    ]);
+    ];
+    const { env: mergedEnv, originOf } = mergeEnvSources(envSources);
 
-    const remoteRefs = scanForRemoteResources(mergedEnv, { allowedHosts });
+    // Scanned per declared value rather than over mergedEnv: whichever source
+    // loses the merge still holds a value the app might be the one to load, so
+    // a placeholder must never be able to hide a real host declared elsewhere.
+    const remoteRefs = scanEnvCandidatesForRemoteResources(collectEnvCandidates(envSources), { allowedHosts });
     if (remoteRefs.length > 0 && !allowRemote) {
-      const list = remoteRefs.map((r) => `  ${r.key} -> ${r.host}   (set by ${originOf(r.key)})`).join("\n");
+      const list = remoteRefs.map((r) => `  ${r.key} -> ${r.host}   (set by ${r.source ?? originOf(r.key)})`).join("\n");
       const hosts = [...new Set(remoteRefs.map((r) => r.host))];
       throw new TwinError(
         "E_UNSAFE_ENV",

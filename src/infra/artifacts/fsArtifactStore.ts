@@ -62,30 +62,59 @@ export class FsArtifactStore implements ArtifactStore {
     return { id, dir: path.join(this.root, "runs", id) };
   }
 
+  /**
+   * Takes the project lock, or refuses. The write is an exclusive create
+   * (`wx`), which is the only part of this that actually excludes anyone:
+   * reading the path and then writing it left a window between the two in
+   * which a second `twin run` read the same empty path, so both runs took the
+   * lock, shared one `.twin/`, and raced on pids.json and the run directory.
+   *
+   * A lock whose owner is gone is still reclaimable - that's what the retry is
+   * for - but reclaiming means deleting the stale file and racing for the
+   * create again, rather than overwriting whatever is there.
+   */
   async acquireLock(): Promise<Lock> {
     await mkdir(this.root, { recursive: true });
     const lockPath = path.join(this.root, "lock");
-
-    const existing = await this.readLockFile(lockPath);
-    if (existing !== null && isProcessAlive(existing.pid)) {
-      throw new TwinError(
-        "E_LOCKED",
-        `Another Twin run (pid ${existing.pid}) appears to be in progress in this project.`,
-        {
-          hint: "Wait for it to finish, or run `twin clean` if you're sure it's dead.",
-          details: { pid: existing.pid, startedAt: existing.startedAt },
-          exitCode: 2
-        }
-      );
-    }
-    // Missing lock, unreadable lock, or a stale PID: safe to reclaim.
 
     const contents: LockFileContents = {
       pid: process.pid,
       startedAt: new Date().toISOString(),
       token: randomUUID()
     };
-    await writeFile(lockPath, JSON.stringify(contents), "utf8");
+
+    // Two attempts: the first can lose to a stale file, the second can only
+    // lose to a live competitor, which is a refusal either way.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await writeFile(lockPath, JSON.stringify(contents), { encoding: "utf8", flag: "wx" });
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+
+        const existing = await this.readLockFile(lockPath);
+        // Unreadable or half-written counts as stale: nobody can prove it's theirs.
+        if (existing !== null && isProcessAlive(existing.pid)) {
+          throw new TwinError(
+            "E_LOCKED",
+            `Another Twin run (pid ${existing.pid}) appears to be in progress in this project.`,
+            {
+              hint: "Wait for it to finish, or run `twin clean` if you're sure it's dead.",
+              details: { pid: existing.pid, startedAt: existing.startedAt },
+              exitCode: 2
+            }
+          );
+        }
+
+        if (attempt === 1) {
+          throw new TwinError("E_LOCKED", "Could not take this project's Twin lock.", {
+            hint: "Another `twin run` is starting at the same moment. Try again, or run `twin clean`.",
+            exitCode: 2
+          });
+        }
+        await rm(lockPath, { force: true });
+      }
+    }
 
     let released = false;
     return {

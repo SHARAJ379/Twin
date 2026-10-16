@@ -64,8 +64,49 @@ describe("runCommand PREFLIGHT failures", () => {
     expect((err as TwinError).message).toContain("db.supabase.co");
     // Which of the four env sources set it - the message used to leave the
     // user to guess, and .env is the wrong guess as often as not.
-    expect((err as TwinError).message).toContain(".env file in the project");
+    expect((err as TwinError).message).toContain(".env in the project");
     expect((err as TwinError).hint).toContain("--allow-remote-host db.supabase.co");
+  });
+
+  /**
+   * The check that matters most, and it used to be switchable off by a
+   * committed file: every `.env*` was merged into one map with later files
+   * winning, so a `localhost` placeholder in `.env.example` replaced the real
+   * production URL in `.env`. The scan then saw nothing remote and Twin would
+   * have written test users and records into the real database.
+   */
+  it("still refuses when a committed .env.example holds a localhost placeholder for the same key", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-preflight-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, trivialScenarioYaml, "utf8");
+    await writeFile(path.join(projectDir, ".env"), "DATABASE_URL=postgres://user:pass@prod.db.supabase.co:5432/app\n", "utf8");
+    await writeFile(path.join(projectDir, ".env.example"), "DATABASE_URL=postgres://localhost:5432/app\n", "utf8");
+
+    const err = await runCommand({ ...baseOptions, projectDir, scenarioPath, env: {} }, logger).catch((e: unknown) => e);
+
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_UNSAFE_ENV");
+    expect((err as TwinError).message).toContain("prod.db.supabase.co");
+  });
+
+  /**
+   * The same bypass without a placeholder file: a remote host in a file that
+   * loses the merge is still a host the app might connect to, so losing the
+   * merge must not mean escaping the scan.
+   */
+  it("refuses for a remote host declared in a .env file that a later .env file overrides", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-preflight-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, trivialScenarioYaml, "utf8");
+    await writeFile(path.join(projectDir, ".env"), "DATABASE_URL=postgres://user:pass@prod.db.supabase.co:5432/app\n", "utf8");
+    await writeFile(path.join(projectDir, ".env.local"), "DATABASE_URL=postgres://localhost:5432/app\n", "utf8");
+
+    const err = await runCommand({ ...baseOptions, projectDir, scenarioPath, env: {} }, logger).catch((e: unknown) => e);
+
+    expect((err as TwinError).code).toBe("E_UNSAFE_ENV");
+    expect((err as TwinError).message).toContain("prod.db.supabase.co");
+    // and it names the file that actually declared it, not the one that won
+    expect((err as TwinError).message).toContain(".env in the project");
   });
 
   it("lets a vouched-for host past the preflight without disabling the check entirely", async () => {

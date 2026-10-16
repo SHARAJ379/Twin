@@ -11,6 +11,17 @@ const SECRET_KEY_PATTERN =
   /(PASSWORD|PASSWD|PWD|PASSPHRASE|SECRET|TOKEN|CREDENTIALS?|PRIVATE_?KEY|API_?KEY|ACCESS_?KEY|SECRET_?KEY|SIGNING|SIGNATURE|SALT|JWT|BEARER|COOKIE|DSN|_KEY$|^KEY$)/i;
 
 /**
+ * Keys the pattern above matches by accident, whose values are not secrets.
+ *
+ * `PWD` is in essentially every shell environment and its value is the current
+ * directory - so Twin masked the project path out of every log line that
+ * mentioned it, including `cannot open <redacted>/data.db`. The log tail exists
+ * to hand over the boot-failure diagnosis, and this quietly deleted it. (The
+ * `PWD` in the pattern is there for `DB_PWD` and `MYSQL_PWD`, which are real.)
+ */
+const NEVER_SECRET_KEYS = new Set(["PWD", "OLDPWD", "CWD", "INIT_CWD", "npm_config_local_prefix"]);
+
+/**
  * A value this short, or this common, appears in ordinary log lines all day -
  * masking it would turn the log into confetti and hide the diagnosis the log
  * exists to provide.
@@ -66,7 +77,7 @@ function looksLikeACredential(value: string): boolean {
 export function collectSecretEnvValues(env: Readonly<Record<string, string | undefined>>): string[] {
   const values = new Set<string>();
   for (const [key, value] of Object.entries(env)) {
-    if (value === undefined || !SECRET_KEY_PATTERN.test(key)) continue;
+    if (value === undefined || NEVER_SECRET_KEYS.has(key) || !SECRET_KEY_PATTERN.test(key)) continue;
     const trimmed = value.trim();
     if (trimmed.length < MIN_SECRET_LENGTH) continue;
     if (NEVER_MASK.has(trimmed.toLowerCase())) continue;

@@ -12,6 +12,31 @@ export interface ActualResponse {
   body?: unknown;
 }
 
+/**
+ * Structural equality for a `jsonPath:` expectation.
+ *
+ * This used to compare `JSON.stringify` of both sides, which makes the result
+ * depend on key order: `{"a":1,"b":2}` and `{"b":2,"a":1}` are the same JSON
+ * value and serialize differently, so an app that happened to emit its fields
+ * in a different order than the scenario listed them failed a check it should
+ * have passed - and under Twin that reads as a multi-instance bug.
+ */
+function deepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((item, index) => deepEqual(item, b[index]));
+  }
+  if (typeof a !== "object") return false;
+
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const leftKeys = Object.keys(left);
+  if (leftKeys.length !== Object.keys(right).length) return false;
+  return leftKeys.every((key) => Object.hasOwn(right, key) && deepEqual(left[key], right[key]));
+}
+
 export function evaluateExpectation(expect: Expectation | undefined, actual: ActualResponse): ExpectationResult {
   if (expect === undefined) return { passed: true, failures: [] };
   const failures: string[] = [];
@@ -33,7 +58,7 @@ export function evaluateExpectation(expect: Expectation | undefined, actual: Act
     for (const [path, expected] of Object.entries(expect.jsonPath)) {
       try {
         const actualValue = extractJsonPath(actual.body, path);
-        if (JSON.stringify(actualValue) !== JSON.stringify(expected)) {
+        if (!deepEqual(actualValue, expected)) {
           failures.push(`expected ${path} to equal ${JSON.stringify(expected)}, got ${JSON.stringify(actualValue)}`);
         }
       } catch (err) {

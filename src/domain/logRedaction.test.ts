@@ -79,4 +79,25 @@ describe("createLogRedactor", () => {
     const redact = createLogRedactor(["sup3rs3cret"]);
     expect(redact("GET /health 200 1ms")).toBe("GET /health 200 1ms");
   });
+
+  /**
+   * PWD is in essentially every shell environment and its value is a directory
+   * path, but the secret-key pattern matched it (it's there for DB_PWD and
+   * MYSQL_PWD). Treating the cwd as a secret masked it out of every log line
+   * that mentioned it - including `cannot open <cwd>/data.db`, which is the
+   * boot-failure diagnosis the log tail exists to deliver.
+   */
+  it("does not treat the shell's own PWD as a secret", () => {
+    const projectDir = "/home/dev/projects/my-app";
+    const values = collectSecretEnvValues({ PWD: projectDir, OLDPWD: "/home/dev", INIT_CWD: projectDir });
+    expect(values).toEqual([]);
+
+    const redact = createLogRedactor(collectSecretEnvValues({ PWD: projectDir }));
+    expect(redact(`Error: cannot open ${projectDir}/data.db`)).toBe(`Error: cannot open ${projectDir}/data.db`);
+  });
+
+  it("still treats a real password env var named with PWD as a secret", () => {
+    expect(collectSecretEnvValues({ DB_PWD: "s3cret-value" })).toEqual(["s3cret-value"]);
+    expect(collectSecretEnvValues({ MYSQL_PWD: "s3cret-value" })).toEqual(["s3cret-value"]);
+  });
 });

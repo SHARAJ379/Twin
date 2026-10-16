@@ -23,7 +23,15 @@ function tokenize(path: string): string[] {
       current = "";
       const end = body.indexOf("]", i);
       if (end === -1) throw new JsonPathError(`malformed JSONPath "${path}": unterminated "["`);
-      tokens.push(body.slice(i + 1, end));
+      const index = body.slice(i + 1, end);
+      // `$.items[]` is a typo, not a selector this subset supports. It used to
+      // be read as index 0 - Number("") is 0, and Number.isInteger(0) is true -
+      // so the step silently saved the first element and the scenario looked
+      // like it worked.
+      if (index.trim().length === 0) {
+        throw new JsonPathError(`malformed JSONPath "${path}": "[]" needs an index, e.g. "[0]"`);
+      }
+      tokens.push(index);
       i = end;
     } else {
       current += ch;
@@ -42,7 +50,10 @@ export function extractJsonPath(value: unknown, path: string): unknown {
       throw new JsonPathError(`JSONPath "${path}" has no value at "${token}"`);
     }
     if (Array.isArray(current)) {
-      const idx = Number(token);
+      // Number(" ") and Number("") are both 0, and Number("1.5") is an integer
+      // check away from being accepted as an index - so the token has to look
+      // like a plain integer before it is treated as one.
+      const idx = /^-?\d+$/.test(token) ? Number(token) : Number.NaN;
       current = Number.isInteger(idx) ? current[idx] : undefined;
     } else if (typeof current === "object") {
       current = (current as Record<string, unknown>)[token];

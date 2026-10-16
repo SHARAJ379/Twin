@@ -3,8 +3,84 @@
 
 const HEADER_ALLOWLIST = new Set(["content-type", "content-length", "location", "x-twin-instance"]);
 const SECRET_HEADER_NAMES = new Set(["authorization"]);
-const SECRET_BODY_KEYS = new Set(["password", "token", "secret", "key", "authorization"]);
 const MAX_BODY_CHARS = 2048;
+
+/**
+ * A field name is a secret if any *word* in it is one of these. Matching whole
+ * words rather than substrings is what keeps both halves of the job honest:
+ * an exact-name list misses every shape real APIs use (`access_token`,
+ * `accessToken`, `refreshToken`, `apiKey`, `client_secret`), while a substring
+ * list masks `author`, `keyword`, `monkey` and `tokenizer_version` - and the
+ * body is evidence a human has to read, so over-redaction has a cost too.
+ */
+const SECRET_WORDS = new Set([
+  "password",
+  "passwd",
+  "passphrase",
+  "pwd",
+  "secret",
+  "token",
+  "key",
+  "auth",
+  "authorization",
+  "bearer",
+  "credential",
+  "credentials",
+  "signature",
+  "sig",
+  "salt",
+  "otp",
+  "pin",
+  "session",
+  "jwt"
+]);
+
+/**
+ * Names with no separator to split on, where the word above would be buried:
+ * `accesstoken` has no boundary, and `token` can't be a substring rule without
+ * taking `tokenizer` with it.
+ */
+const SECRET_KEY_SUBSTRINGS = [
+  "password",
+  "passwd",
+  "passphrase",
+  "secret",
+  "credential",
+  "apikey",
+  "accesstoken",
+  "refreshtoken",
+  "idtoken",
+  "authtoken",
+  "accesskey",
+  "privatekey",
+  "signingkey",
+  "sessionid",
+  "authorization",
+  "bearer",
+  "signature"
+];
+
+/** Lowercased with separators removed, so api_key / API-KEY / apiKey are one thing. */
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** `X-Auth-Token` and `accessToken` both become ["x","auth","token"] / ["access","token"]. */
+function wordsIn(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0);
+}
+
+function isSecretKey(key: string, extra: ReadonlySet<string>): boolean {
+  const normalized = normalizeKey(key);
+  if (normalized.length === 0) return false;
+  if (extra.has(normalized)) return true;
+  if (wordsIn(key).some((word) => SECRET_WORDS.has(word))) return true;
+  return SECRET_KEY_SUBSTRINGS.some((needle) => normalized.includes(needle));
+}
 
 function redactSetCookie(value: string): string {
   // "sid=abc123; Path=/; HttpOnly" -> "sid=<redacted>; Path=/; HttpOnly" - only
@@ -43,7 +119,11 @@ export function redactHeaders(
     const value = Array.isArray(rawValue) ? rawValue.join(", ") : rawValue;
 
     if (key === "set-cookie") {
-      out[rawKey] = redactSetCookie(value);
+      // Each cookie redacted on its own: a response can set several, and
+      // joining them first would hand redactSetCookie one string whose later
+      // name=value pairs look like attributes of the first cookie.
+      const cookies = Array.isArray(rawValue) ? rawValue : [value];
+      out[rawKey] = cookies.map(redactSetCookie).join(", ");
     } else if (key === "cookie") {
       out[rawKey] = redactCookieRequestHeader(value);
     } else if (SECRET_HEADER_NAMES.has(key) || extra.has(key)) {
@@ -57,29 +137,59 @@ export function redactHeaders(
   return out;
 }
 
-function maskSecretValues(value: unknown, secretKeys: Set<string>): unknown {
-  if (Array.isArray(value)) return value.map((v) => maskSecretValues(v, secretKeys));
+function maskSecretValues(value: unknown, extra: ReadonlySet<string>): unknown {
+  if (Array.isArray(value)) return value.map((v) => maskSecretValues(v, extra));
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = secretKeys.has(key.toLowerCase()) ? "<redacted>" : maskSecretValues(v, secretKeys);
+      out[key] = isSecretKey(key, extra) ? "<redacted>" : maskSecretValues(v, extra);
     }
     return out;
   }
   return value;
 }
 
-/** Masks JSON values whose key looks secret-ish, then truncates to 2KB. */
+/**
+ * `email=a%40b.com&password=hunter2` - the body every HTML form and OAuth
+ * token endpoint sends. A value may itself contain "=" (an unencoded base64
+ * token does), so only the first one separates name from value.
+ */
+const FORM_BODY = /^[^\s=&]+=[^\s&]*(?:&[^\s=&]+=[^\s&]*)*$/;
+
+function redactFormBody(raw: string, extra: ReadonlySet<string>): string {
+  return raw
+    .split("&")
+    .map((pair) => {
+      const eqIdx = pair.indexOf("=");
+      if (eqIdx === -1) return pair;
+      const name = pair.slice(0, eqIdx);
+      return isSecretKey(decodeURIComponent(name), extra) ? `${name}=<redacted>` : pair;
+    })
+    .join("&");
+}
+
+/**
+ * Masks the values of secret-looking fields, then truncates to 2KB. Reports
+ * and `results.json` are meant to be safe to paste publicly (§7.7), and this
+ * is the only thing standing between an app's login request and a pasted
+ * report.
+ *
+ * Both body encodings Twin can send are handled. Only JSON used to be, which
+ * meant `email=a&password=hunter2` - a plain form login, and the single most
+ * likely body in any scenario's first step - was written to disk verbatim.
+ */
 export function redactBody(raw: string | undefined, extraSecretKeys: string[] = []): string | undefined {
   if (raw === undefined || raw.length === 0) return raw;
-  const secretKeys = new Set([...SECRET_BODY_KEYS, ...extraSecretKeys.map((k) => k.toLowerCase())]);
+  const extra = new Set(extraSecretKeys.map(normalizeKey).filter((k) => k.length > 0));
 
   let text = raw;
   try {
     const parsed: unknown = JSON.parse(raw);
-    text = JSON.stringify(maskSecretValues(parsed, secretKeys));
+    text = JSON.stringify(maskSecretValues(parsed, extra));
   } catch {
-    // Not JSON - fall through and truncate the raw text as-is.
+    // Not JSON. A form body is the other encoding Twin sends, and the one a
+    // login almost always uses; anything else is truncated as-is.
+    if (FORM_BODY.test(raw)) text = redactFormBody(raw, extra);
   }
 
   return text.length > MAX_BODY_CHARS ? `${text.slice(0, MAX_BODY_CHARS)}<truncated>` : text;

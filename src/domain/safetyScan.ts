@@ -92,6 +92,21 @@ const THIRD_PARTY_KEY_PATTERN = /^(STRIPE|SENDGRID|TWILIO|OPENAI|ANTHROPIC|MAILG
 export interface RemoteResourceRef {
   key: string;
   host: string;
+  /** Which env source declared this value, when the caller tracked it. */
+  source?: string | undefined;
+}
+
+/**
+ * One declared value of one env var. The scan takes a list of these rather
+ * than a merged map because merging has to pick a winner per key, and a scan
+ * that only sees winners can be switched off by whichever source happens to
+ * lose: a `localhost` placeholder overwriting a real production URL hides the
+ * very thing the scan exists to catch. Every declared value gets looked at.
+ */
+export interface EnvCandidate {
+  key: string;
+  value: string;
+  source?: string | undefined;
 }
 
 /** URL.hostname keeps brackets around an IPv6 literal ("[::1]"), unlike every other host form. */
@@ -192,18 +207,33 @@ export function scanForRemoteResources(
   env: Readonly<Record<string, string>>,
   options: { allowedHosts?: readonly string[] } = {}
 ): RemoteResourceRef[] {
+  return scanEnvCandidatesForRemoteResources(
+    Object.entries(env).map(([key, value]) => ({ key, value })),
+    options
+  );
+}
+
+/**
+ * The same scan over every declared value, each carrying where it came from.
+ * Prefer this: see EnvCandidate for why a merged map isn't safe to scan.
+ */
+export function scanEnvCandidatesForRemoteResources(
+  candidates: readonly EnvCandidate[],
+  options: { allowedHosts?: readonly string[] } = {}
+): RemoteResourceRef[] {
   const allowedHosts = options.allowedHosts ?? [];
   const found: RemoteResourceRef[] = [];
   const seen = new Set<string>();
-  for (const [key, value] of Object.entries(env)) {
+  for (const { key, value, source } of candidates) {
     const hostKey = isHostShapedKey(key);
     if (!hostKey && !SUSPICIOUS_KEY_PATTERN.test(key)) continue;
     for (const host of hostsIn(value, hostKey)) {
-      // A seed list may repeat a host, and two keys may point at the same one -
-      // the refusal message reads better without the duplicates.
+      // A seed list may repeat a host, two keys may point at the same one, and
+      // two files may declare the same key - the refusal message reads better
+      // without the duplicates.
       if (isLocalHost(host) || isAllowedHost(host, allowedHosts) || seen.has(`${key}|${host}`)) continue;
       seen.add(`${key}|${host}`);
-      found.push({ key, host });
+      found.push({ key, host, source });
     }
   }
   return found;

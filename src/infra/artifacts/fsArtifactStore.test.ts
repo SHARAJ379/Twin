@@ -100,6 +100,42 @@ describe("FsArtifactStore", () => {
     await (await store.acquireLock()).release();
   });
 
+  /**
+   * The reclaim path's own race, which survived the first two attempts at this
+   * lock. Several runs all see the same stale lock, all judge it reclaimable,
+   * and then delete in turn - so a later delete lands on the fresh lock an
+   * earlier run has already taken, and both hold it. Reclaiming has to be an
+   * atomic steal, not a check followed by a delete.
+   */
+  it("lets exactly one of several runs reclaim the same stale lock", async () => {
+    const store = new FsArtifactStore(projectDir);
+    await mkdir(path.join(projectDir, ".twin"), { recursive: true });
+    await writeFile(
+      path.join(projectDir, ".twin", "lock"),
+      JSON.stringify({ pid: 999_999, startedAt: "x", token: "stale" }),
+      "utf8"
+    );
+
+    const outcomes = await Promise.allSettled([store.acquireLock(), store.acquireLock(), store.acquireLock()]);
+    const won = outcomes.filter((o) => o.status === "fulfilled");
+
+    expect(won).toHaveLength(1);
+    // and the one that won really is the lock on disk
+    const onDisk = JSON.parse(await readFile(path.join(projectDir, ".twin", "lock"), "utf8")) as { pid: number };
+    expect(onDisk.pid).toBe(process.pid);
+
+    await (won[0] as PromiseFulfilledResult<{ release: () => Promise<void> }>).value.release();
+  });
+
+  it("leaves no stale-steal temp files behind", async () => {
+    const store = new FsArtifactStore(projectDir);
+    const lock = await store.acquireLock();
+    await lock.release();
+
+    const left = await readdir(path.join(projectDir, ".twin"));
+    expect(left.filter((name) => name.startsWith("lock."))).toEqual([]);
+  });
+
   it("reclaims a lock left behind by a dead pid", async () => {
     const store = new FsArtifactStore(projectDir);
     const lockPath = path.join(projectDir, ".twin", "lock");

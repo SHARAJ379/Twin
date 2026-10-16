@@ -279,7 +279,11 @@ export class HttpScenarioClient implements ScenarioClient {
       parsedBody = undefined;
     }
 
-    const expectationResult = evaluateExpectation(step.expect, { status: response.status, bodyText: responseText, body: parsedBody });
+    const expectationResult = evaluateExpectation(
+      step.expect,
+      { status: response.status, bodyText: responseText, body: parsedBody },
+      { extraSecretKeys: ctx.redactExtraHeaders ?? [] }
+    );
 
     const saved: Record<string, string> = {};
     if (step.save !== undefined) {

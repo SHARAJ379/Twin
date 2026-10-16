@@ -38,7 +38,21 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return leftKeys.every((key) => Object.hasOwn(right, key) && deepEqual(left[key], right[key]));
 }
 
-export function evaluateExpectation(expect: Expectation | undefined, actual: ActualResponse): ExpectationResult {
+export interface EvaluateOptions {
+  /**
+   * Field names the user declared secret (`--redact-header` / `redactHeaders`).
+   * These reached the body preview but not the failure message, so a field the
+   * user had explicitly asked to be redacted was masked in one place in the
+   * report and printed in full in another.
+   */
+  extraSecretKeys?: readonly string[];
+}
+
+export function evaluateExpectation(
+  expect: Expectation | undefined,
+  actual: ActualResponse,
+  options: EvaluateOptions = {}
+): ExpectationResult {
   if (expect === undefined) return { passed: true, failures: [] };
   const failures: string[] = [];
 
@@ -63,8 +77,9 @@ export function evaluateExpectation(expect: Expectation | undefined, actual: Act
           // Redacted, because this message is quoted in failedExpectations, a
           // finding's summary, report.json/md, the fix prompt and the terminal
           // - all of which are meant to be safe to paste publicly.
+          const extra = [...(options.extraSecretKeys ?? [])];
           failures.push(
-            `expected ${path} to equal ${redactValueForMessage(expected, path)}, got ${redactValueForMessage(actualValue, path)}`
+            `expected ${path} to equal ${redactValueForMessage(expected, path, extra)}, got ${redactValueForMessage(actualValue, path, extra)}`
           );
         }
       } catch (err) {

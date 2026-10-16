@@ -102,6 +102,20 @@ describe("evaluateExpectation", () => {
     expect(result.failures.join(" ")).toContain("$.token");
   });
 
+  /**
+   * A field the user declared secret was masked in the body preview and
+   * printed in full in the failure message, because the keys never reached
+   * here.
+   */
+  it("masks a field the user declared secret, which the message never used to receive", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.x_custom": "expected" } },
+      { status: 200, body: { x_custom: "the-real-value" } },
+      { extraSecretKeys: ["X-Custom"] }
+    );
+    expect(result.failures.join(" ")).not.toContain("the-real-value");
+  });
+
   it("still names the field and shows an ordinary value, so a mismatch stays diagnosable", () => {
     const result = evaluateExpectation(
       { jsonPath: { "$.name": "test-item" } },

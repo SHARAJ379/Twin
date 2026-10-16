@@ -160,9 +160,9 @@ describe("redactValueForMessage", () => {
 
   it("masks a JWT-shaped value even at a path that looks harmless", () => {
     const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk";
-    // Rendered as a JSON value, so the mask is a quoted string here.
-    expect(redactValueForMessage(jwt, "$.id")).toBe('"<redacted>"');
-    expect(redactValueForMessage({ nested: jwt }, "$.payload")).not.toContain("eyJhbGci");
+    expect(redactValueForMessage(jwt, "$.id")).toBe("<redacted>");
+    // Nested in an object it is a JSON value, so quoted there.
+    expect(redactValueForMessage({ nested: jwt }, "$.payload")).toBe('{"nested":"<redacted>"}');
   });
 
   it("masks secret keys nested inside a mismatched object", () => {
@@ -185,5 +185,53 @@ describe("redactValueForMessage", () => {
   it("renders a missing value without throwing", () => {
     expect(redactValueForMessage(undefined, "$.missing")).toBe("undefined");
     expect(redactValueForMessage(null, "$.nothing")).toBe("null");
+  });
+
+  /**
+   * Checking only the last path segment missed every path whose secret-naming
+   * part isn't at the end - `$.tokens[0]` ends in the index `0`.
+   */
+  it("masks when any segment of the path names a secret, not just the last", () => {
+    expect(redactValueForMessage("a3f1c9d2e4b60718293a4b5c6d7e8f90", "$.tokens[0]")).toBe("<redacted>");
+    expect(redactValueForMessage("x", "$.session.values[2]")).toBe("<redacted>");
+    expect(redactValueForMessage("x", "$.credentials.items[0].value")).toBe("<redacted>");
+  });
+
+  /**
+   * A value can be a credential whatever the path is called. These two were
+   * reproduced in real report output at `$.data.value` and `$.tokens[0]`.
+   */
+  /**
+   * Deliberately unmistakable non-keys. The detection is on the prefix, so a
+   * placeholder suffix exercises it exactly as a real key would - and writing
+   * realistic ones here got this very commit blocked by GitHub's push
+   * protection, which is as good a confirmation as any that the shapes being
+   * masked are the shapes that matter.
+   */
+  it.each([
+    "sk_live_PLACEHOLDER-not-a-real-key",
+    "sk_test_PLACEHOLDER-not-a-real-key",
+    "ghp_PLACEHOLDER-not-a-real-token",
+    "xoxb-PLACEHOLDER-not-a-real-token",
+    "AKIA-PLACEHOLDER-not-a-real-id",
+    "AIza-PLACEHOLDER-not-a-real-key",
+    "a3f1c9d2e4b60718293a4b5c6d7e8f90"
+  ])("masks the opaque secret %s even at an innocuous path", (secret) => {
+    expect(redactValueForMessage(secret, "$.data.value")).toBe("<redacted>");
+  });
+
+  it("leaves values a human actually needs to read", () => {
+    expect(redactValueForMessage("test-item", "$.data.value")).toBe('"test-item"');
+    expect(redactValueForMessage("alice@example.com", "$.data.value")).toBe('"alice@example.com"');
+    // A record id is the single most likely thing to be asserted on.
+    expect(redactValueForMessage("3f8b2c5a-1d4e-4f6a-9b8c-7d2e1f0a5b3c", "$.data.id")).toBe(
+      '"3f8b2c5a-1d4e-4f6a-9b8c-7d2e1f0a5b3c"'
+    );
+    expect(redactValueForMessage("a message with spaces in it", "$.data.value")).toBe('"a message with spaces in it"');
+    expect(redactValueForMessage("0000000000000000000000000000", "$.data.serial")).toBe('"0000000000000000000000000000"');
+  });
+
+  it("masks a field name the user declared secret", () => {
+    expect(redactValueForMessage("plain-value", "$.data.x_custom", ["X-Custom"])).toBe("<redacted>");
   });
 });

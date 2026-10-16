@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
@@ -74,9 +74,14 @@ export class FsArtifactStore implements ArtifactStore {
    * 2. The file must become visible already complete (see tryCreateLockFile).
    *    An exclusive create still publishes it empty for a moment, and a peer
    *    reading it then saw an unparseable lock and reclaimed it as stale.
-   * 3. Reclaiming a stale lock must be conditional, and taking one must be
-   *    confirmed by reading it back - otherwise two runs reclaiming the same
-   *    stale lock delete each other's fresh one.
+   * 3. Reclaiming a stale lock must itself be atomic - a rename, not a read
+   *    and then a delete (see stealStaleLock). Checking the token before
+   *    deleting narrowed that window without closing it: two runs could both
+   *    pass the check, and the slower delete then landed on the fresh lock the
+   *    faster run had already taken.
+   *
+   * And taking the lock is confirmed by reading it back, so that if any of
+   * this is still wrong, the outcome is a refusal rather than two holders.
    */
   async acquireLock(): Promise<Lock> {
     await mkdir(this.root, { recursive: true });
@@ -100,10 +105,10 @@ export class FsArtifactStore implements ArtifactStore {
     // twice in a row means someone else is winning, which is a refusal.
     for (let attempt = 0; attempt < 3 && !acquired; attempt++) {
       if (await this.tryCreateLockFile(lockPath, contents)) {
-        // Read back before trusting it. A peer that judged a *previous* lock
-        // stale can delete this one - the file it inspected is gone by then -
-        // and take the lock itself; if that happened, the token here is theirs
-        // and we must not go on to share this project's .twin with them.
+        // Read back before trusting it: the belt to stealStaleLock's braces.
+        // If anything did move this file out from under us, the token here is
+        // someone else's, and we must refuse rather than go on to share this
+        // project's .twin with them.
         const seen = await this.readLockFile(lockPath);
         if (seen !== null && seen.token === contents.token) {
           acquired = true;
@@ -115,9 +120,10 @@ export class FsArtifactStore implements ArtifactStore {
 
       const existing = await this.readLockFile(lockPath);
       if (existing !== null && isProcessAlive(existing.pid)) throw held(existing);
-      // Stale, or unreadable and so unattributable. Reclaim it - but only if
-      // it is still the very file just judged, never whatever is there now.
-      await this.removeLockIfUnchanged(lockPath, existing);
+      // Stale, or unreadable and so unattributable. Reclaiming it is a steal,
+      // not a delete: exactly one racing run can rename it away, and the
+      // others go round again to look at whatever is there now.
+      await this.stealStaleLock(lockPath, contents.token);
     }
 
     if (!acquired) {
@@ -166,29 +172,61 @@ export class FsArtifactStore implements ArtifactStore {
    * so both runs held it, which is the thing the exclusive create was for.
    */
   private async tryCreateLockFile(lockPath: string, contents: LockFileContents): Promise<boolean> {
+    const json = JSON.stringify(contents);
     const tmpPath = `${lockPath}.${contents.token}.tmp`;
-    await writeFile(tmpPath, JSON.stringify(contents), "utf8");
+    await writeFile(tmpPath, json, "utf8");
     try {
       await link(tmpPath, lockPath);
       return true;
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      return false;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return false;
+      // Not every filesystem has hard links - FAT/exFAT, and some network and
+      // container bind mounts, answer EPERM/ENOTSUP/ENOSYS. Rethrowing meant
+      // `twin run` could not take the lock there at all, so it refused to
+      // start, every time. An exclusive create is the fallback: it leaves the
+      // brief window where the file exists empty, which the read-back check
+      // after acquiring is there to catch anyway.
+      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "ENOSYS" && code !== "EXDEV" && code !== "EACCES") throw err;
+      try {
+        await writeFile(lockPath, json, { encoding: "utf8", flag: "wx" });
+        return true;
+      } catch (fallbackErr) {
+        if ((fallbackErr as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw fallbackErr;
+      }
     } finally {
       await rm(tmpPath, { force: true });
     }
   }
 
   /**
-   * Deletes the lock only if it is still the one the caller inspected and
-   * judged reclaimable. Two runs that both see the same stale lock would
-   * otherwise delete in turn - the second deleting the *fresh* lock the first
-   * had just taken - and both would then believe they held it.
+   * Takes a stale lock out of the way, atomically, and says whether this
+   * process is the one that did it.
+   *
+   * `rename` is the whole mechanism: the destination is unique per attempt, so
+   * two runs renaming the same lock cannot both succeed - the loser finds
+   * nothing there and gets ENOENT. Checking the token and *then* deleting
+   * looked equivalent and wasn't: both runs could pass the check, and the
+   * second `rm` would land on the fresh lock the first had already taken,
+   * leaving two runs each believing they held it. A read followed by a write
+   * is not a compare-and-swap, which is the same mistake this lock has now
+   * made twice, in two different spellings.
    */
-  private async removeLockIfUnchanged(lockPath: string, judged: LockFileContents | null): Promise<void> {
-    const current = await this.readLockFile(lockPath);
-    const unchanged = judged === null ? current === null : current !== null && current.token === judged.token;
-    if (unchanged) await rm(lockPath, { force: true });
+  private async stealStaleLock(lockPath: string, token: string): Promise<boolean> {
+    const graveyard = `${lockPath}.stale.${token}`;
+    try {
+      await rename(lockPath, graveyard);
+      await rm(graveyard, { force: true });
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      // ENOENT: someone else got there first. Anything else (a Windows share
+      // violation, say) is also "not ours to reclaim" - either way, go back
+      // and look at what is there now.
+      if (code === "ENOENT" || code === "EPERM" || code === "EACCES" || code === "EBUSY") return false;
+      throw err;
+    }
   }
 
   private async readLockFile(lockPath: string): Promise<LockFileContents | null> {

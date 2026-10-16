@@ -9,6 +9,36 @@ shift between minor versions.
 
 ### Fixed
 
+- Reclaiming a stale project lock is now an atomic steal rather than a check followed by a
+  delete. Two runs could both judge the same stale lock reclaimable, and the slower delete then
+  landed on the fresh lock the faster run had already taken - leaving two runs each believing
+  they held it, which is the case the previous two attempts at this lock were both meant to
+  rule out. A rename can only succeed once, so exactly one run reclaims it.
+- The lock no longer refuses to work on a filesystem without hard links. FAT/exFAT and some
+  network and container bind mounts answer `EPERM`/`ENOTSUP`, which was rethrown, so `twin run`
+  could not take the lock there and refused to start every time. It falls back to an exclusive
+  create on those filesystems.
+- `killTree` only signals a bare pid when the caller has confirmed the pid is still the process
+  it recorded, which `reapOrphans` does by matching the live command line. Gating that on
+  whether the pid was alive looked like protection and wasn't: a recycled pid is alive by
+  definition, so the guard skipped only the harmless case and still signalled an unrelated
+  process in the one that matters.
+- Expectation-failure messages mask opaque credentials, not just JWTs and secret-looking field
+  names. A `sk_live_...` key at `$.data.value` and a 32-character hex session id at
+  `$.tokens[0]` both reached the report. Any segment of the path naming a secret now masks the
+  value (only the last was checked, so `$.tokens[0]` - ending in the index `0` - slipped
+  through), known credential prefixes and long opaque high-entropy tokens are masked wherever
+  they sit, and UUIDs are left alone because a record id is the most likely thing to be
+  asserted on.
+- Field names the user declared secret with `--redact-header`/`redactHeaders` now reach the
+  failure message too. They were applied to the body preview only, so a field the user had
+  explicitly asked to be redacted was masked in one part of the report and printed in full in
+  another.
+- `--start ""` is rejected like an empty `"start"` in twin.config.json. The config check added
+  for this missed the flag, where an empty string is not "unset": it won the fallback chain,
+  suppressed stack detection, and was handed to a shell, which reported itself as the app
+  crashing on boot.
+
 - Instances get their dependencies again on Node 20, which is the Node version this package
   promises to support. `fs.cp`'s filter reports each path as an extended-length `\?\C:\...`
   path on Node 20 for Windows and as a plain path on Node 22+, so computing a project-relative

@@ -177,6 +177,15 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     // what the tracer scans, and which static rules apply - so it's resolved
     // even when --start was given.
     const explicitStart = options.start ?? config?.start;
+    // Checked here rather than only in twin.config.json's validation, because
+    // `--start ""` reaches this the same way and is not "unset": an empty
+    // string won the `??` above, suppressed stack detection, and was handed to
+    // a shell - which then reported itself as the app crashing on boot.
+    if (explicitStart !== undefined && explicitStart.trim().length === 0) {
+      throw new TwinError("E_CONFIG_INVALID", "the start command is empty", {
+        hint: 'Pass a real command to --start (or "start" in twin.config.json), or leave it out entirely to let Twin detect it.'
+      });
+    }
     let stack: StackProfile;
     let start: string | undefined;
     try {

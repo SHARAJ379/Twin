@@ -109,6 +109,40 @@ describe("runCommand PREFLIGHT failures", () => {
     expect((err as TwinError).message).toContain(".env in the project");
   });
 
+  /**
+   * The config validation added for this only covered twin.config.json, but
+   * `--start ""` arrives by a different route: an empty string is not "unset",
+   * so it won the fallback chain, suppressed stack detection, and was handed
+   * to a shell - which reported itself as the app crashing on boot.
+   */
+  it("rejects an empty --start instead of running an empty command", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-emptystart-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, trivialScenarioYaml, "utf8");
+
+    const err = await runCommand(
+      { ...baseOptions, projectDir, scenarioPath, env: {}, start: "" },
+      logger
+    ).catch((e: unknown) => e);
+
+    expect(TwinError.isTwinError(err)).toBe(true);
+    expect((err as TwinError).code).toBe("E_CONFIG_INVALID");
+    expect((err as TwinError).message).toContain("start command is empty");
+  });
+
+  it("rejects a whitespace-only --start the same way", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-emptystart-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(scenarioPath, trivialScenarioYaml, "utf8");
+
+    const err = await runCommand(
+      { ...baseOptions, projectDir, scenarioPath, env: {}, start: "   " },
+      logger
+    ).catch((e: unknown) => e);
+
+    expect((err as TwinError).code).toBe("E_CONFIG_INVALID");
+  });
+
   it("lets a vouched-for host past the preflight without disabling the check entirely", async () => {
     projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-preflight-"));
     const scenarioPath = path.join(projectDir, "scenario.yaml");

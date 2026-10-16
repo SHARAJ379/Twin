@@ -6,6 +6,18 @@ export interface KillTreeOptions {
   /** "graceful" sends SIGTERM and waits up to graceMs before SIGKILL. "crash" kills immediately. Ignored on Windows: taskkill /T /F is always a hard kill (§7.3). */
   mode: "graceful" | "crash";
   graceMs: number;
+  /**
+   * Set only by a caller that has *positively confirmed* this pid is still the
+   * process it recorded - reapOrphans does it by matching the live command
+   * line (§7.3). It permits the single-pid fallback below.
+   *
+   * Liveness is not that confirmation and can't be: a recycled pid is alive by
+   * definition, so gating the fallback on `isProcessAlive` only skipped the
+   * harmless case (nothing holding the pid at all) and still signalled an
+   * unrelated process in the case that actually matters. Identity has to come
+   * from the caller, because killTree has no idea what it was asked to kill.
+   */
+  verifiedOurs?: boolean;
 }
 
 async function sleep(ms: number): Promise<void> {
@@ -33,18 +45,16 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
   // the server it spawned keeps running and keeps the port. Returning early
   // because the leader was gone left exactly that server alive.
   //
-  // A dead leader does narrow what may be signalled, though. `pid` is then a
-  // number the OS is free to hand to something unrelated, so the only
-  // legitimate target is the process *group* - which is still ours, since a
-  // group id isn't reused while the group has members. That's what this flag
-  // gates: with the leader gone, safeKillGroup must not fall back to
-  // signalling the bare pid.
-  const leaderAlive = isProcessAlive(pid);
+  // The process *group* is the only thing safe to signal unconditionally: a
+  // group id isn't recycled while the group still has members, so `-pid`
+  // either reaches our instance's tree or reaches nothing. The bare pid is a
+  // different matter (see verifiedOurs).
+  const mayTargetBarePid = options.verifiedOurs === true;
 
   if (options.mode === "crash") {
-    safeKillGroup(pid, "SIGKILL", leaderAlive);
+    safeKillGroup(pid, "SIGKILL", mayTargetBarePid);
   } else {
-    safeKillGroup(pid, "SIGTERM", leaderAlive);
+    safeKillGroup(pid, "SIGTERM", mayTargetBarePid);
     const deadline = Date.now() + options.graceMs;
     while (Date.now() < deadline && isProcessAlive(pid)) {
       await sleep(50);
@@ -53,7 +63,7 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
     // with the leader already gone that guard was false, so a group whose
     // leader had exited got a SIGTERM and nothing else. SIGKILL to a group
     // that has fully drained is a no-op.
-    safeKillGroup(pid, "SIGKILL", leaderAlive);
+    safeKillGroup(pid, "SIGKILL", mayTargetBarePid);
   }
 
   // A signal being sent isn't the same as the OS having reaped the process -
@@ -70,11 +80,12 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
  * Signals the whole process group, falling back to the bare pid only when
  * `mayTargetBarePid` says that pid is still the process we were given.
  *
- * The fallback is for the case where `pid` heads no group (a child spawned
- * without `detached`, which is how the tests drive this). It must not fire for
- * a dead leader: `kill(-pid)` failing then means the group is gone, and
- * signalling `pid` alone would be aiming SIGTERM and SIGKILL at whatever
- * unrelated process the OS has since given that number to.
+ * The fallback is for the case where `pid` heads no group - a child spawned
+ * without `detached`. Twin's instances are spawned detached precisely so the
+ * group is signallable, so in a real run this never fires; the one caller that
+ * opts in is reapOrphans, which has already matched the live command line
+ * against what it recorded. Without that confirmation, signalling the bare pid
+ * is aiming SIGTERM and SIGKILL at whatever process now holds that number.
  */
 function safeKillGroup(pid: number, signal: NodeJS.Signals, mayTargetBarePid: boolean): void {
   try {

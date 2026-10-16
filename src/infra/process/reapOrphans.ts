@@ -60,7 +60,10 @@ export async function reapOrphans(records: PidRecord[], logger: Logger): Promise
       continue;
     }
 
-    await killTree(record.pid, { mode: "crash", graceMs: 0 });
+    // verifiedOurs: the command-line match above is the confirmation that
+    // this pid is still the process we recorded, which is what permits a
+    // single-pid signal for an instance that heads no group.
+    await killTree(record.pid, { mode: "crash", graceMs: 0, verifiedOurs: true });
     result.reaped.push(record);
   }
 

@@ -103,6 +103,15 @@ Tag a `request` step with `check: <id>` to assert multi-instance behavior:
 A step that fails one of these gets a ready-to-paste fix prompt in the report, and
 Twin's tracer tries to point at the likely file/line in your source.
 
+The last three checks all sit behind a login, so when the session is the thing that
+breaks, their assertion comes back `401`/`403` - refused at the door, with no handler
+run and nothing read from any store. Twin says so rather than claiming the record or
+file was missing: the finding stays a failure (the CONTROL run proved the same request
+works on a single instance), its summary names the session as what diverged, the
+tracer points at your session store instead of your data store, and `report.json`
+carries `blockedBy: "auth"` on that finding. In practice this means a broken session
+shows up as one bug with one cause, not four unrelated-looking ones.
+
 ### Retrying a step that needs a moment (`retries` / `settleMs`)
 
 Some writes aren't readable the instant the write returns - a queue, a cache
@@ -280,10 +289,11 @@ Checks that your machine can run Twin (Node version, platform, git).
 
 ### `twin clean`
 
-Kills any orphaned instance processes left behind by a past run that didn't get
-torn down cleanly. Ctrl-C handles itself - it stops the instances it started
-and removes their workspaces before exiting - so this is for the cases that
-can't: a crash, a killed terminal, a machine that went to sleep.
+Clears up after a past run that didn't get torn down cleanly: orphaned
+instance processes, and the temp workspaces those instances ran in. Ctrl-C
+handles itself - it stops the instances it started and removes their workspaces
+before exiting - so this is for the cases that can't: a crash, a killed
+terminal, a machine that went to sleep.
 
 ```
 --project <dir>    project directory to clean (default: cwd)
@@ -295,6 +305,12 @@ to something else entirely by now — if the live command line doesn't match, or
 if the OS won't say what the process is at all, Twin reports it and leaves it
 alone rather than risk killing something of yours. Those it skips are named in
 the output, so you can kill them yourself if they really are leftovers.
+
+Workspaces are swept with the same caution. Only directories named exactly
+`twin-<run-id>` are considered - never anything else you happen to have called
+`twin-something` - and only once an hour has passed since both the run started
+and the workspace was last written to, so a run still in flight can't have its
+workspace deleted from under it. Anything newer is reported and left.
 
 ## Exit codes
 

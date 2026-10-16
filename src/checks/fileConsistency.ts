@@ -1,3 +1,4 @@
+import { describeAuthRejectedFailure, isAuthRejection } from "../domain/authRejection.js";
 import type { Check, CheckInput } from "../domain/check.js";
 import { evaluateControlGated } from "../domain/controlGate.js";
 
@@ -6,6 +7,9 @@ const TITLE = "File consistency";
 
 function describeFailure(input: CheckInput): string {
   const status = input.assertion.response?.status ?? "no response";
+  if (isAuthRejection(input.assertion)) {
+    return describeAuthRejectedFailure("the fetch via another instance", "the file", status, "other-instance");
+  }
   return `a file uploaded via one instance could not be fetched back via another instance (status ${status})`;
 }
 

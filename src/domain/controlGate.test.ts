@@ -68,4 +68,43 @@ describe("evaluateControlGated", () => {
       expect(finding.reason.length).toBeGreaterThan(0);
     }
   });
+
+  // Regression: every failing check used to look alike to the tracer, so a
+  // read-back refused at the door (401) got blamed on the upload directory
+  // the request never reached.
+  it("marks a failure the app rejected on auth, so the tracer blames the session and not the store", () => {
+    const input: CheckInput = {
+      assertion: stepResult({
+        stepId: "split-1",
+        expectationsPassed: false,
+        failedExpectations: ["expected status 200, got 401"],
+        response: { status: 401, headers: {} }
+      }),
+      related: [],
+      control: stepResult({ stepId: "control-1", expectationsPassed: true }),
+      workspaceDiffs: [],
+      profile: "ephemeral"
+    };
+    const finding = evaluateControlGated(input, "data-consistency", "Data consistency", describeFailure);
+    expect(finding.status).toBe("fail"); // still a real divergence - control proved it works on one instance
+    expect(finding.blockedBy).toBe("auth");
+  });
+
+  it("leaves blockedBy unset for a failure the app actually answered (404, not 401)", () => {
+    const input: CheckInput = {
+      assertion: stepResult({
+        stepId: "split-1",
+        expectationsPassed: false,
+        failedExpectations: ["expected status 200, got 404"],
+        response: { status: 404, headers: {} }
+      }),
+      related: [],
+      control: stepResult({ stepId: "control-1", expectationsPassed: true }),
+      workspaceDiffs: [],
+      profile: "ephemeral"
+    };
+    const finding = evaluateControlGated(input, "data-consistency", "Data consistency", describeFailure);
+    expect(finding.status).toBe("fail");
+    expect(finding.blockedBy).toBeUndefined();
+  });
 });

@@ -75,7 +75,11 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir))(
       throw new Error(`orphan process died right after the manager was killed. child.log:\n${childLog}`);
     }
 
-    const result = await cleanOrphans(projectDir, logger);
+    // Its own tmp root, so the sweep this also performs can't touch workspaces
+    // belonging to anything else running on the machine.
+    const sweepDir = await mkdtemp(path.join(os.tmpdir(), "twin-orphan-sweep-"));
+    const result = await cleanOrphans(projectDir, logger, sweepDir);
+    await rm(sweepDir, { recursive: true, force: true });
 
     expect(result.reaped.map((r) => r.pid)).toContain(orphanPid);
     expect(isProcessAlive(orphanPid)).toBe(false);

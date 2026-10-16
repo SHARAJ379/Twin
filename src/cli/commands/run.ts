@@ -270,7 +270,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     });
 
     logger.info("TRACE: mapping any failing checks to likely code locations");
-    const findings = await traceFindings(evaluated, options.projectDir, split.workspaceDiffs, stack);
+    const findings = await traceFindings(evaluated, options.projectDir, split.workspaceDiffs, stack, split.results);
     const verdict = computeVerdict(findings);
 
     const reportJson = buildReportJson({ scenarioName: scenario.name, profile: PROFILE, findings, verdict });

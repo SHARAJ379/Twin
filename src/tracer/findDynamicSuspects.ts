@@ -55,7 +55,8 @@ export async function findDynamicSuspects(projectDir: string, diff: WorkspaceDif
             kind,
             confidence: "high",
             rationale: `"${changedPath}" was written only on instance ${diff.instance}'s local disk, and this line references it`,
-            source: "dynamic"
+            source: "dynamic",
+            evidencePath: changedPath
           });
         }
       }

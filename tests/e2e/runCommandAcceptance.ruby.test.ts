@@ -56,6 +56,10 @@ describe.skipIf(rubyMissing)("twin run against a live Ruby app: broken => FAIL, 
   it("PASSes all four checks against examples/fixed-ruby, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedRubyDir, ".twin"));
     const sharedDir = await mkdtemp(path.join(os.tmpdir(), "twin-fixed-ruby-shared-"));
+    // Swept with the .twin dirs: `twin clean` deliberately only removes
+    // Twin's own `twin-<run-id>` workspaces, so a fixture dir left here is
+    // litter nothing else will ever collect.
+    twinDirsToClean.push(sharedDir);
     const exitCode = await runCommand(
       {
         ...baseOptions,

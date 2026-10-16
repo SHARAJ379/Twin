@@ -5,6 +5,37 @@ All notable changes to this project are documented here. Format follows
 public CLI surface (flags, exit codes, `twin.config.json` fields, scenario schema) may still
 shift between minor versions.
 
+## [Unreleased]
+
+### Fixed
+
+- A check whose request came back `401`/`403` no longer reports the store it never reached as
+  missing. `data-consistency` used to say "a record created via one instance could not be read
+  back" for a read-back the app refused at the door - a claim Twin never tested, since no
+  handler ran. Such a finding is still a failure (the control run proved the same request works
+  on one instance) but it now says the session is what diverged, and the tracer points at the
+  session store instead of the data store. `restart-persistence` reads back via the instance it
+  just restarted, so it says the session was refused by that same instance after the restart
+  rather than blaming a second instance that was never in the request.
+- The tracer ranks a suspect's relevance to the failing check above where the evidence came
+  from. A workspace diff is proof about the file it came from, so the upload directory used to
+  lead `data-consistency`'s suspects - pushing the in-memory record store the check is actually
+  about off the end of the three-suspect cap. Dynamic evidence still wins among suspects of
+  equally relevant kind.
+- `twin clean` removes the temp workspaces a past run left in the system temp directory, not
+  just its orphaned processes, and does so even when the project has no `.twin/runs` at all -
+  which is how they usually get stranded. It only touches directories named exactly
+  `twin-<run-id>`, and only once an hour has passed since both the run started and the
+  workspace was last written to, so a run still in flight can never have its workspace
+  deleted underneath it.
+- The multi-stack acceptance tests delete the shared state directories they create, instead of
+  leaving one per stack per run in the system temp directory.
+
+### Added
+
+- `report.json` findings carry `blockedBy: "auth"` when the assertion was refused before it
+  reached the subject the check is named after. Additive, so `schemaVersion` stays `1`.
+
 ## [0.1.0] - 2026-10-13
 
 First published release. Everything below is part of it - the sections exist to say what

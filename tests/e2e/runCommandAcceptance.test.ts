@@ -62,13 +62,33 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
     const latestId = await readFile(path.join(twinDir, "latest"), "utf8");
     const report = JSON.parse(await readFile(path.join(twinDir, "runs", latestId, "report.json"), "utf8")) as {
       verdict: { failed: number };
-      findings: { checkId: string; status: string; suspects: unknown[]; evidence: { run: "control" | "split"; stepId: string }[] }[];
+      findings: {
+        checkId: string;
+        status: string;
+        summary: string;
+        blockedBy?: string;
+        suspects: { snippet: string }[];
+        evidence: { run: "control" | "split"; stepId: string }[];
+      }[];
     };
     expect(report.verdict.failed).toBe(4);
     // At least the two file-backed checks (file-consistency, restart-persistence)
     // must get real tracer evidence, not just an empty suspects list.
     expect(report.findings.every((f) => f.status === "fail")).toBe(true);
     expect(report.findings.some((f) => f.suspects.length > 0)).toBe(true);
+
+    // The session dies first in this fixture, so the three later checks are
+    // refused with a 401 before they reach a record, a file or the disk. They
+    // are still failures - the control run passed every one of them on a
+    // single instance - but they used to be reported as the record being
+    // missing, and handed the upload directory as a high-confidence cause for
+    // a request no handler ever saw.
+    const authBlocked = report.findings.filter((f) => f.blockedBy === "auth");
+    expect(authBlocked.length).toBeGreaterThan(0);
+    for (const finding of authBlocked) {
+      expect(finding.summary).toContain("the session is what diverged");
+      expect(finding.suspects.every((s) => !/uploads/.test(s.snippet))).toBe(true);
+    }
 
     // Every finding's evidence is a pointer ({run, stepId}); results.json is
     // what those pointers point at. Without it on disk, a report referenced
@@ -95,6 +115,10 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
   it("PASSes all four checks against examples/fixed-express, given shared session secret/data/upload paths", async () => {
     twinDirsToClean.push(path.join(fixedExpressDir, ".twin"));
     const sharedDir = await mkdtemp(path.join(os.tmpdir(), "twin-fixed-shared-"));
+    // Swept with the .twin dirs: `twin clean` deliberately only removes
+    // Twin's own `twin-<run-id>` workspaces, so a fixture dir left here is
+    // litter nothing else will ever collect.
+    twinDirsToClean.push(sharedDir);
     const exitCode = await runCommand(
       {
         ...baseOptions,

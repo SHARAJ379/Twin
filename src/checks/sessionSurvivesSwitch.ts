@@ -20,6 +20,8 @@ export const sessionSurvivesSwitchCheck: Check = {
   explanation:
     "If your app stores login sessions only in memory (or in a cookie signed with a per-process secret), a user logged in via one instance gets logged out as soon as a later request lands on a different instance.",
   evaluate(input: CheckInput) {
-    return evaluateControlGated(input, ID, TITLE, describeFailure);
+    // The 401 this check reports is its whole point, so it is never the
+    // "blocked short of its subject" case the other three can be.
+    return evaluateControlGated(input, ID, TITLE, describeFailure, { subjectIsAuthentication: true });
   }
 };

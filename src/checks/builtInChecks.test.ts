@@ -87,3 +87,57 @@ describe("restartPersistenceCheck", () => {
     expect(finding.status).toBe("pass");
   });
 });
+
+// Regression: a 404 and a 401 used to produce the same sentence - "a record
+// created via one instance could not be read back" - but a 401 means no
+// handler ran, so Twin never found out whether the record was there.
+describe("a check whose request was refused on auth", () => {
+  const refused = () =>
+    baseInput(
+      stepResult({
+        expectationsPassed: false,
+        response: { status: 401, headers: {} },
+        failedExpectations: ["expected status 200, got 401"]
+      }),
+      stepResult({ expectationsPassed: true })
+    );
+
+  it("does not claim data-consistency's record was missing, and marks the finding auth-blocked", () => {
+    const finding = dataConsistencyCheck.evaluate(refused());
+    expect(finding.status).toBe("fail");
+    expect(finding.blockedBy).toBe("auth");
+    expect(finding.summary).toContain("the session is what diverged");
+    expect(finding.summary).not.toMatch(/could not be read back/);
+  });
+
+  it("does not claim file-consistency's file was missing", () => {
+    const finding = fileConsistencyCheck.evaluate(refused());
+    expect(finding.blockedBy).toBe("auth");
+    expect(finding.summary).not.toMatch(/could not be fetched back/);
+  });
+
+  it("does not claim restart-persistence's data was lost in the restart", () => {
+    const finding = restartPersistenceCheck.evaluate(refused());
+    expect(finding.blockedBy).toBe("auth");
+    expect(finding.summary).not.toMatch(/could not be read back/);
+  });
+
+  it("still describes a real 404 as the missing record it is", () => {
+    const finding = dataConsistencyCheck.evaluate(
+      baseInput(
+        stepResult({ expectationsPassed: false, response: { status: 404, headers: {} } }),
+        stepResult({ expectationsPassed: true })
+      )
+    );
+    expect(finding.blockedBy).toBeUndefined();
+    expect(finding.summary).toMatch(/could not be read back/);
+  });
+
+  // 401 is this check's own subject, so it keeps its own plain wording - and
+  // is not "blocked" short of anything.
+  it("leaves the session check's own summary and attribution alone", () => {
+    const finding = sessionSurvivesSwitchCheck.evaluate(refused());
+    expect(finding.summary).toMatch(/was rejected \(status 401\)/);
+    expect(finding.blockedBy).toBeUndefined();
+  });
+});

@@ -1,5 +1,15 @@
+import { isAuthRejection } from "./authRejection.js";
 import type { CheckInput, Finding } from "./check.js";
 import type { CheckId } from "./scenario.js";
+
+export interface ControlGateOptions {
+  /**
+   * True for a check whose own subject *is* the authentication (the session
+   * check): a 401 is its finding, not something that stopped it short, so it
+   * is never marked `blockedBy: "auth"`.
+   */
+  subjectIsAuthentication?: boolean;
+}
 
 /**
  * The trust mechanism every check is built on (§6.1, §6.4, invariant I7): a
@@ -16,7 +26,8 @@ export function evaluateControlGated(
   input: CheckInput,
   checkId: CheckId,
   title: string,
-  describeFailure: (input: CheckInput) => string
+  describeFailure: (input: CheckInput) => string,
+  options: ControlGateOptions = {}
 ): Finding {
   if (input.control === undefined) {
     return {
@@ -64,6 +75,12 @@ export function evaluateControlGated(
       { run: "control", stepId: input.control.stepId, note: "passed on a single instance" },
       { run: "split", stepId: input.assertion.stepId, note: input.assertion.failedExpectations.join("; ") }
     ],
-    suspects: []
+    suspects: [],
+    // Still a fail - the control gate just proved this request works on one
+    // instance - but a 401/403 means it never reached this check's own
+    // subject, so nothing downstream may blame that subject's code.
+    ...(options.subjectIsAuthentication !== true && isAuthRejection(input.assertion)
+      ? { blockedBy: "auth" as const }
+      : {})
   };
 }

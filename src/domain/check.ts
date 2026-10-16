@@ -19,6 +19,14 @@ interface FindingBase {
   summary: string;
   evidence: EvidenceRef[];
   suspects: Suspect[];
+  /**
+   * What stopped the assertion short of its own subject, when something did.
+   * "auth" means the response was a 401/403, so the request never reached the
+   * record/file/session state the check is named after (domain/authRejection.ts) -
+   * the tracer blames the session layer for these rather than the store the
+   * request never got to.
+   */
+  blockedBy?: "auth" | undefined;
 }
 
 export type Finding =

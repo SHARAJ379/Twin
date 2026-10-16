@@ -62,7 +62,7 @@ program
 
 program
   .command("clean")
-  .description("Kill any orphaned instance processes left behind by a past run")
+  .description("Kill any orphaned instance processes, and remove the temp workspaces, left behind by a past run")
   .option("--project <dir>", "project directory to clean", process.cwd())
   .action(async (opts: { project: string }) => {
     await cleanOrphans(opts.project, logger);

@@ -1,3 +1,4 @@
+import { describeAuthRejectedFailure, isAuthRejection } from "../domain/authRejection.js";
 import type { Check, CheckInput } from "../domain/check.js";
 import { evaluateControlGated } from "../domain/controlGate.js";
 
@@ -6,6 +7,9 @@ const TITLE = "Restart persistence";
 
 function describeFailure(input: CheckInput): string {
   const status = input.assertion.response?.status ?? "no response";
+  if (isAuthRejection(input.assertion)) {
+    return describeAuthRejectedFailure("the read-back after the restart", "any stored data", status, "after-restart");
+  }
   return `data created before an instance restart could not be read back afterwards (status ${status})`;
 }
 

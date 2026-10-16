@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { redactBody, redactHeaders } from "./redaction.js";
+import { redactBody, redactHeaders, redactValueForMessage } from "./redaction.js";
 
 describe("redactHeaders", () => {
   it("keeps allowlisted headers verbatim", () => {
@@ -124,5 +124,66 @@ describe("redactBody", () => {
 
   it("does not mistake ordinary prose for a form body", () => {
     expect(redactBody("hello world = not a form")).toBe("hello world = not a form");
+  });
+
+  /**
+   * A field name is app-supplied text and decodeURIComponent throws URIError on
+   * a stray `%`. Response bodies are redacted outside any try/catch, so one
+   * such body aborted the entire run.
+   */
+  it("does not throw on a form-shaped body with a malformed percent escape", () => {
+    expect(() => redactBody("discount%=10")).not.toThrow();
+    expect(redactBody("discount%=10")).toBe("discount%=10");
+    expect(redactBody("%=1&%zz=2")).toBe("%=1&%zz=2");
+    // An undecodable name is still matched, on its raw text - so a secret
+    // field doesn't escape masking by carrying a bad escape.
+    expect(redactBody("password%=hunter2")).toBe("password%=<redacted>");
+  });
+
+  it("still masks a secret field whose name is percent-encoded", () => {
+    expect(redactBody("access%5Ftoken=abc")).toBe("access%5Ftoken=<redacted>");
+  });
+});
+
+describe("redactValueForMessage", () => {
+  /**
+   * Expectation-failure messages are quoted in failedExpectations, a finding's
+   * summary, report.json/md, the fix prompt and the terminal - all of which
+   * promise to be safe to paste publicly. Body redaction never reached them.
+   */
+  it("masks the value entirely when the path names a secret", () => {
+    expect(redactValueForMessage("eyJSECRETJWT.payload.sig", "$.token")).toBe("<redacted>");
+    expect(redactValueForMessage("abc", "$.user.password")).toBe("<redacted>");
+    expect(redactValueForMessage("abc", "$.data.access_token")).toBe("<redacted>");
+    expect(redactValueForMessage("abc", "$.items[0].apiKey")).toBe("<redacted>");
+  });
+
+  it("masks a JWT-shaped value even at a path that looks harmless", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    // Rendered as a JSON value, so the mask is a quoted string here.
+    expect(redactValueForMessage(jwt, "$.id")).toBe('"<redacted>"');
+    expect(redactValueForMessage({ nested: jwt }, "$.payload")).not.toContain("eyJhbGci");
+  });
+
+  it("masks secret keys nested inside a mismatched object", () => {
+    const out = redactValueForMessage({ email: "a@test.com", token: "abc123" }, "$.user");
+    expect(out).toContain("a@test.com");
+    expect(out).not.toContain("abc123");
+  });
+
+  it("still shows an ordinary mismatched value, so the failure stays diagnosable", () => {
+    expect(redactValueForMessage("test-item", "$.name")).toBe('"test-item"');
+    expect(redactValueForMessage(42, "$.count")).toBe("42");
+  });
+
+  it("truncates a very long value", () => {
+    const out = redactValueForMessage("x".repeat(500), "$.description");
+    expect(out.endsWith("<truncated>")).toBe(true);
+    expect(out.length).toBeLessThan(200);
+  });
+
+  it("renders a missing value without throwing", () => {
+    expect(redactValueForMessage(undefined, "$.missing")).toBe("undefined");
+    expect(redactValueForMessage(null, "$.nothing")).toBe("null");
   });
 });

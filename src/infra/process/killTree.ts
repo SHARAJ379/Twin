@@ -33,15 +33,18 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
   // the server it spawned keeps running and keeps the port. Returning early
   // because the leader was gone left exactly that server alive.
   //
-  // The group id is the dead leader's pid, so there is a theoretical window
-  // where the OS has recycled that pid onto an unrelated new group leader.
-  // It's a far smaller risk than leaking the app under test: these pids are
-  // seconds old and signalled immediately, while the alternative leaks a
-  // process holding a port for as long as the machine is up.
+  // A dead leader does narrow what may be signalled, though. `pid` is then a
+  // number the OS is free to hand to something unrelated, so the only
+  // legitimate target is the process *group* - which is still ours, since a
+  // group id isn't reused while the group has members. That's what this flag
+  // gates: with the leader gone, safeKillGroup must not fall back to
+  // signalling the bare pid.
+  const leaderAlive = isProcessAlive(pid);
+
   if (options.mode === "crash") {
-    safeKillGroup(pid, "SIGKILL");
+    safeKillGroup(pid, "SIGKILL", leaderAlive);
   } else {
-    safeKillGroup(pid, "SIGTERM");
+    safeKillGroup(pid, "SIGTERM", leaderAlive);
     const deadline = Date.now() + options.graceMs;
     while (Date.now() < deadline && isProcessAlive(pid)) {
       await sleep(50);
@@ -50,7 +53,7 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
     // with the leader already gone that guard was false, so a group whose
     // leader had exited got a SIGTERM and nothing else. SIGKILL to a group
     // that has fully drained is a no-op.
-    safeKillGroup(pid, "SIGKILL");
+    safeKillGroup(pid, "SIGKILL", leaderAlive);
   }
 
   // A signal being sent isn't the same as the OS having reaped the process -
@@ -63,11 +66,21 @@ export async function killTree(pid: number, options: KillTreeOptions): Promise<v
   }
 }
 
-function safeKillGroup(pid: number, signal: NodeJS.Signals): void {
+/**
+ * Signals the whole process group, falling back to the bare pid only when
+ * `mayTargetBarePid` says that pid is still the process we were given.
+ *
+ * The fallback is for the case where `pid` heads no group (a child spawned
+ * without `detached`, which is how the tests drive this). It must not fire for
+ * a dead leader: `kill(-pid)` failing then means the group is gone, and
+ * signalling `pid` alone would be aiming SIGTERM and SIGKILL at whatever
+ * unrelated process the OS has since given that number to.
+ */
+function safeKillGroup(pid: number, signal: NodeJS.Signals, mayTargetBarePid: boolean): void {
   try {
     process.kill(-pid, signal);
   } catch {
-    // Group already gone, or (e.g. in a test) pid isn't a group leader - fall back to the single pid.
+    if (!mayTargetBarePid) return;
     try {
       process.kill(pid, signal);
     } catch {

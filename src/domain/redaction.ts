@@ -156,6 +156,20 @@ function maskSecretValues(value: unknown, extra: ReadonlySet<string>): unknown {
  */
 const FORM_BODY = /^[^\s=&]+=[^\s&]*(?:&[^\s=&]+=[^\s&]*)*$/;
 
+/**
+ * A field name is attacker- (or app-) supplied text, and `decodeURIComponent`
+ * throws URIError on a stray `%` - `discount%=10` is enough. Redaction runs on
+ * a response body outside any try/catch, so that threw away the whole run.
+ * Nothing here may ever throw; an undecodable name is matched as-is instead.
+ */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 function redactFormBody(raw: string, extra: ReadonlySet<string>): string {
   return raw
     .split("&")
@@ -163,7 +177,7 @@ function redactFormBody(raw: string, extra: ReadonlySet<string>): string {
       const eqIdx = pair.indexOf("=");
       if (eqIdx === -1) return pair;
       const name = pair.slice(0, eqIdx);
-      return isSecretKey(decodeURIComponent(name), extra) ? `${name}=<redacted>` : pair;
+      return isSecretKey(safeDecode(name), extra) ? `${name}=<redacted>` : pair;
     })
     .join("&");
 }
@@ -192,5 +206,53 @@ export function redactBody(raw: string | undefined, extraSecretKeys: string[] = 
     if (FORM_BODY.test(raw)) text = redactFormBody(raw, extra);
   }
 
+  return truncate(text);
+}
+
+function truncate(text: string): string {
   return text.length > MAX_BODY_CHARS ? `${text.slice(0, MAX_BODY_CHARS)}<truncated>` : text;
+}
+
+/** A JWT, or anything else shaped like one. Three base64url segments is not a value anyone needs to read. */
+const JWT_SHAPED = /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/;
+
+/** How much of a mismatched value a failure message is allowed to quote. */
+const MAX_MESSAGE_VALUE_CHARS = 160;
+
+function maskCredentialStrings(value: unknown): unknown {
+  if (typeof value === "string") return JWT_SHAPED.test(value) ? "<redacted>" : value;
+  if (Array.isArray(value)) return value.map(maskCredentialStrings);
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) out[key] = maskCredentialStrings(v);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Renders a value for an expectation-failure message, which is quoted in
+ * `failedExpectations`, a finding's `summary`, report.json, results.json,
+ * report.md, the fix prompt and the terminal.
+ *
+ * Those messages used to print the response value verbatim - body redaction
+ * never reached them - so a scenario asserting on `$.token` put the real token
+ * into a report that promises to be safe to paste publicly, and into CI logs.
+ *
+ * `fieldHint` is the JSONPath the value came from: when its last segment names
+ * a secret, nothing of the value survives. Otherwise nested secret keys are
+ * masked, anything JWT-shaped is masked wherever it sits, and the rest is
+ * truncated - a mismatch is still diagnosable, which is the point of the
+ * message.
+ */
+export function redactValueForMessage(value: unknown, fieldHint: string, extraSecretKeys: string[] = []): string {
+  const extra = new Set(extraSecretKeys.map(normalizeKey).filter((k) => k.length > 0));
+  const lastSegment = fieldHint.split(/[.[\]]/).filter((part) => part.length > 0).pop();
+
+  if (lastSegment !== undefined && lastSegment !== "$" && isSecretKey(lastSegment, extra)) return "<redacted>";
+
+  const masked = maskCredentialStrings(maskSecretValues(value, extra));
+  const rendered = masked === undefined ? "undefined" : JSON.stringify(masked);
+  if (rendered === undefined) return "undefined";
+  return rendered.length > MAX_MESSAGE_VALUE_CHARS ? `${rendered.slice(0, MAX_MESSAGE_VALUE_CHARS)}<truncated>` : rendered;
 }

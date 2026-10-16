@@ -9,6 +9,47 @@ shift between minor versions.
 
 ### Fixed
 
+- Expectation-failure messages no longer quote the response verbatim. A failing `jsonPath:`
+  check built `expected $.token to equal "a", got "<the real token>"`, and that string goes into
+  `failedExpectations`, a finding's `summary`, report.json, results.json, report.md, the
+  ready-to-paste fix prompt and the terminal - none of which body redaction ever reached. A
+  scenario asserting on a token, session or email leaked it into a report that promises to be
+  safe to paste publicly, and into CI logs. The value is masked entirely when the path names a
+  secret, JWT-shaped strings are masked wherever they sit, nested secret keys are masked, and
+  the rest is truncated - a real mismatch is still diagnosable.
+- A response body with a stray `%` no longer aborts the run. Redacting a form-shaped body
+  called `decodeURIComponent` on each field name, which throws `URIError` on `discount%=10`;
+  response redaction runs outside any try/catch, so one such body ended the whole `twin run`.
+  Nothing in redaction can throw now, and an undecodable name is still matched on its raw text,
+  so a secret field can't escape masking by carrying a bad escape.
+- A scenario's own `Content-Type` is no longer sent twice. The content type for a `json:`/`form:`
+  body was filled in under the lowercase key only, so `Content-Type: application/vnd.api+json`
+  kept both spellings and fetch joined them into
+  `application/vnd.api+json, application/json` - which servers reject or misparse, and Twin
+  then reported as a multi-instance failure. Outgoing header names are lowercased on the way in,
+  which fixes the same collision for a scenario-set `Cookie` against the jar's own.
+- The project lock holds under a genuine race. The exclusive create closed the plain case but
+  left two: the file exists empty for a moment between create and write, and a peer reading it
+  then saw an unparseable lock and reclaimed it as stale; and two runs that both judged the same
+  stale lock would delete in turn, the second deleting the fresh lock the first had just taken.
+  The lock is now published complete (written to a temp path and hard-linked into place),
+  reclaiming a stale lock only deletes the exact file that was judged, and taking one is
+  confirmed by reading it back.
+- The stack's `ignore` list applies at the top level only, as `WorkspaceOptions` always said it
+  did. Matched by name at any depth, it dropped real source directories - `src/build/`,
+  `lib/dist/` - out of the instance workspace, and the app failed to boot on a missing module.
+  `.git`, `.twin` and `node_modules` are still skipped at any depth.
+- `killTree` no longer signals a bare pid once its process group is gone. The group kill is
+  right for a dead leader, but the single-pid fallback behind it was aiming SIGTERM and SIGKILL
+  at a pid the OS is free to have reused. The fallback now only fires while the process Twin was
+  given is still alive.
+- `E_UNSAFE_ENV`'s machine-readable `details` names the file that declared the remote host, like
+  the printed list does, instead of whichever source won the merge.
+- `twin.config.json` rejects an empty string where a command or path is required. `"start": ""`
+  was accepted and handed to a shell, which reported itself as the app crashing on boot.
+- Cookies that share a name are sent longest-path first (RFC 6265 5.4) rather than in arrival
+  order, so a server reading only the first gets the more specific one.
+
 - The safety preflight can no longer be switched off by a committed file. Every `.env*` file
   was merged into one map with later files overwriting earlier ones, so a `localhost`
   placeholder in `.env.example` replaced a real `DATABASE_URL` in `.env`: the scan found

@@ -52,4 +52,15 @@ describe("validateTwinConfig", () => {
     const result = validateTwinConfig({ allowRemote: "yes" });
     expect(result.ok).toBe(false);
   });
+
+  it("rejects an empty string for a field that has to name something", () => {
+    // Accepted before, so `"start": ""` ran an empty command and reported
+    // itself as the app crashing on boot.
+    for (const field of ["scenario", "stack", "start", "build", "healthPath", "portEnv"]) {
+      const result = validateTwinConfig({ [field]: "" });
+      expect(result.ok, field).toBe(false);
+      if (!result.ok) expect(result.errors[0]?.message).toContain("must not be empty");
+    }
+    expect(validateTwinConfig({ start: "   " }).ok).toBe(false);
+  });
 });

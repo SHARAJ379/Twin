@@ -159,7 +159,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
           hint: `Twin would write test users/records into this real database. Point it at a local one, vouch for ${
             hosts.length === 1 ? "this host" : "these hosts"
           } with ${hosts.map((host) => `--allow-remote-host ${host}`).join(" ")}, or turn the check off entirely with --allow-remote.`,
-          details: { remoteRefs: remoteRefs.map((ref) => ({ ...ref, source: originOf(ref.key) })) }
+          details: { remoteRefs: remoteRefs.map((ref) => ({ ...ref, source: ref.source ?? originOf(ref.key) })) }
         }
       );
     }

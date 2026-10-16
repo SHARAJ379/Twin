@@ -9,6 +9,8 @@ import type { FileEntry } from "../../domain/workspaceDiff.js";
 import type { WorkspaceManager, WorkspaceOptions } from "../../ports/workspaceManager.js";
 
 const DEFAULT_IGNORE = [".git", ".twin", "node_modules"];
+/** Skipped at any depth, unlike the stack's own ignore list - these are never a project's own source. */
+const DEPTH_IGNORED = new Set(DEFAULT_IGNORE);
 /**
  * Hashed in full up to here, streamed rather than buffered. Twin's workspaces
  * are app source plus whatever the app writes - a SQLite file, an upload dir -
@@ -123,7 +125,7 @@ export class FsWorkspaceManager implements WorkspaceManager {
     if (cached) return cached;
 
     const dest = path.join(this.root, "pristine", path.basename(resolvedSource));
-    const ignore = new Set([...DEFAULT_IGNORE, ...options.ignore]);
+    const ignore = new Set(options.ignore);
     const link = new Set(options.link);
     // Collected during the copy rather than by a second walk: the filter
     // already visits every path, and cp never descends into one it rejects -
@@ -135,11 +137,20 @@ export class FsWorkspaceManager implements WorkspaceManager {
       recursive: true,
       filter: (source) => {
         const name = path.basename(source);
+        const relativePath = path.relative(resolvedSource, source);
         if (link.has(name)) {
-          linkPaths.push(path.relative(resolvedSource, source));
+          linkPaths.push(relativePath);
           return false;
         }
-        return !ignore.has(name);
+        // The stack's ignore list is top-level only, as WorkspaceOptions says:
+        // it names build output (`dist`, `build`, `bin`, `tmp`, `log`,
+        // `storage`) at the root of a project. Matched at any depth, it took
+        // real source directories with it - `src/build/`, `lib/dist/` - which
+        // left the app unable to boot on a missing module, reported as a
+        // workspace that simply didn't work. DEFAULT_IGNORE stays depth-wide:
+        // `.git`, `.twin` and `node_modules` are noise wherever they appear.
+        if (DEPTH_IGNORED.has(name)) return false;
+        return !(ignore.has(name) && relativePath === name);
       }
     });
 

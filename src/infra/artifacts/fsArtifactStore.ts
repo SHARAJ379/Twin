@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
@@ -63,15 +63,20 @@ export class FsArtifactStore implements ArtifactStore {
   }
 
   /**
-   * Takes the project lock, or refuses. The write is an exclusive create
-   * (`wx`), which is the only part of this that actually excludes anyone:
-   * reading the path and then writing it left a window between the two in
-   * which a second `twin run` read the same empty path, so both runs took the
-   * lock, shared one `.twin/`, and raced on pids.json and the run directory.
+   * Takes the project lock, or refuses. Two runs holding it at once means one
+   * `.twin/` shared by both, racing on pids.json and the run directory.
    *
-   * A lock whose owner is gone is still reclaimable - that's what the retry is
-   * for - but reclaiming means deleting the stale file and racing for the
-   * create again, rather than overwriting whatever is there.
+   * Three things are needed to actually exclude a peer, and the first two were
+   * each tried alone and weren't enough:
+   *
+   * 1. The create must be exclusive. Reading the path and then writing it left
+   *    a window in which both runs saw no lock.
+   * 2. The file must become visible already complete (see tryCreateLockFile).
+   *    An exclusive create still publishes it empty for a moment, and a peer
+   *    reading it then saw an unparseable lock and reclaimed it as stale.
+   * 3. Reclaiming a stale lock must be conditional, and taking one must be
+   *    confirmed by reading it back - otherwise two runs reclaiming the same
+   *    stale lock delete each other's fresh one.
    */
   async acquireLock(): Promise<Lock> {
     await mkdir(this.root, { recursive: true });
@@ -83,37 +88,43 @@ export class FsArtifactStore implements ArtifactStore {
       token: randomUUID()
     };
 
-    // Two attempts: the first can lose to a stale file, the second can only
-    // lose to a live competitor, which is a refusal either way.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        await writeFile(lockPath, JSON.stringify(contents), { encoding: "utf8", flag: "wx" });
-        break;
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+    const held = (existing: LockFileContents): TwinError =>
+      new TwinError("E_LOCKED", `Another Twin run (pid ${existing.pid}) appears to be in progress in this project.`, {
+        hint: "Wait for it to finish, or run `twin clean` if you're sure it's dead.",
+        details: { pid: existing.pid, startedAt: existing.startedAt },
+        exitCode: 2
+      });
 
-        const existing = await this.readLockFile(lockPath);
-        // Unreadable or half-written counts as stale: nobody can prove it's theirs.
-        if (existing !== null && isProcessAlive(existing.pid)) {
-          throw new TwinError(
-            "E_LOCKED",
-            `Another Twin run (pid ${existing.pid}) appears to be in progress in this project.`,
-            {
-              hint: "Wait for it to finish, or run `twin clean` if you're sure it's dead.",
-              details: { pid: existing.pid, startedAt: existing.startedAt },
-              exitCode: 2
-            }
-          );
+    let acquired = false;
+    // Three attempts: each one can lose a reclaim race to a peer, and losing
+    // twice in a row means someone else is winning, which is a refusal.
+    for (let attempt = 0; attempt < 3 && !acquired; attempt++) {
+      if (await this.tryCreateLockFile(lockPath, contents)) {
+        // Read back before trusting it. A peer that judged a *previous* lock
+        // stale can delete this one - the file it inspected is gone by then -
+        // and take the lock itself; if that happened, the token here is theirs
+        // and we must not go on to share this project's .twin with them.
+        const seen = await this.readLockFile(lockPath);
+        if (seen !== null && seen.token === contents.token) {
+          acquired = true;
+          break;
         }
-
-        if (attempt === 1) {
-          throw new TwinError("E_LOCKED", "Could not take this project's Twin lock.", {
-            hint: "Another `twin run` is starting at the same moment. Try again, or run `twin clean`.",
-            exitCode: 2
-          });
-        }
-        await rm(lockPath, { force: true });
+        if (seen !== null && isProcessAlive(seen.pid)) throw held(seen);
+        continue;
       }
+
+      const existing = await this.readLockFile(lockPath);
+      if (existing !== null && isProcessAlive(existing.pid)) throw held(existing);
+      // Stale, or unreadable and so unattributable. Reclaim it - but only if
+      // it is still the very file just judged, never whatever is there now.
+      await this.removeLockIfUnchanged(lockPath, existing);
+    }
+
+    if (!acquired) {
+      throw new TwinError("E_LOCKED", "Could not take this project's Twin lock.", {
+        hint: "Another `twin run` is starting at the same moment. Try again, or run `twin clean`.",
+        exitCode: 2
+      });
     }
 
     let released = false;
@@ -142,6 +153,42 @@ export class FsArtifactStore implements ArtifactStore {
     const sorted = entries.sort().reverse(); // run ids are zero-padded ISO timestamps: lexical sort == chronological
     const toRemove = sorted.slice(keep);
     await Promise.all(toRemove.map((id) => rm(path.join(runsDir, id), { recursive: true, force: true })));
+  }
+
+  /**
+   * Creates the lock file complete, or reports that someone else got there.
+   *
+   * Written to a temp path and hard-linked into place, because `link` both
+   * fails on an existing target and publishes the file already populated.
+   * `open(..., "wx")` is exclusive but creates the file *empty* and fills it a
+   * moment later, and a peer that read it inside that window got an
+   * unparseable lock, concluded it was stale, deleted it and took the lock -
+   * so both runs held it, which is the thing the exclusive create was for.
+   */
+  private async tryCreateLockFile(lockPath: string, contents: LockFileContents): Promise<boolean> {
+    const tmpPath = `${lockPath}.${contents.token}.tmp`;
+    await writeFile(tmpPath, JSON.stringify(contents), "utf8");
+    try {
+      await link(tmpPath, lockPath);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      return false;
+    } finally {
+      await rm(tmpPath, { force: true });
+    }
+  }
+
+  /**
+   * Deletes the lock only if it is still the one the caller inspected and
+   * judged reclaimable. Two runs that both see the same stale lock would
+   * otherwise delete in turn - the second deleting the *fresh* lock the first
+   * had just taken - and both would then believe they held it.
+   */
+  private async removeLockIfUnchanged(lockPath: string, judged: LockFileContents | null): Promise<void> {
+    const current = await this.readLockFile(lockPath);
+    const unchanged = judged === null ? current === null : current !== null && current.token === judged.token;
+    if (unchanged) await rm(lockPath, { force: true });
   }
 
   private async readLockFile(lockPath: string): Promise<LockFileContents | null> {

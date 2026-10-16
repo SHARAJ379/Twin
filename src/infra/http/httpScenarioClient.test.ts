@@ -167,3 +167,105 @@ describe("HttpScenarioClient cookie handling", () => {
     expect(sawCookie).toEqual(["sid=abc123"]);
   });
 });
+
+describe("HttpScenarioClient outgoing headers", () => {
+  /**
+   * The content type was set with `headers["content-type"] ??= ...`, which only
+   * sees the lowercase key. A scenario sending `Content-Type:
+   * application/vnd.api+json` with a `json:` body kept both spellings and
+   * fetch joined them - "application/vnd.api+json, application/json" - which
+   * servers reject or misparse, and Twin reported as a multi-instance failure.
+   */
+  it("does not send a scenario's Content-Type twice when a json body supplies one too", async () => {
+    const seen: (string | undefined)[] = [];
+    const url = await listen((req, res) => {
+      seen.push(req.headers["content-type"]);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+
+    const scenario: Scenario = {
+      name: "s",
+      version: 1,
+      steps: [
+        {
+          kind: "request",
+          id: "post",
+          request: {
+            method: "POST",
+            path: "/things",
+            headers: { "Content-Type": "application/vnd.api+json" },
+            json: { name: "x" }
+          }
+        }
+      ]
+    };
+    await new HttpScenarioClient().run(scenario, {
+      proxyUrl: url,
+      instanceDriver: driver,
+      instances: [],
+      requestTimeoutMs: 5000
+    });
+
+    expect(seen).toEqual(["application/vnd.api+json"]);
+  });
+
+  it("still supplies a content type when the scenario sets none", async () => {
+    const seen: (string | undefined)[] = [];
+    const url = await listen((req, res) => {
+      seen.push(req.headers["content-type"]);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+
+    const scenario: Scenario = {
+      name: "s",
+      version: 1,
+      steps: [
+        { kind: "request", id: "post", request: { method: "POST", path: "/things", json: { name: "x" } } }
+      ]
+    };
+    await new HttpScenarioClient().run(scenario, {
+      proxyUrl: url,
+      instanceDriver: driver,
+      instances: [],
+      requestTimeoutMs: 5000
+    });
+
+    expect(seen).toEqual(["application/json"]);
+  });
+
+  /** The jar's cookie must not arrive alongside a scenario's own `Cookie` header. */
+  it("does not send Cookie twice when the scenario sets one and the jar has one", async () => {
+    const seen: (string | undefined)[] = [];
+    const url = await listen((req, res) => {
+      const path = req.url ?? "/";
+      if (path.startsWith("/login")) {
+        res.writeHead(200, { "set-cookie": "sid=fromjar; Path=/" });
+        res.end();
+        return;
+      }
+      seen.push(req.headers.cookie);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+
+    const scenario: Scenario = {
+      name: "s",
+      version: 1,
+      steps: [
+        { kind: "request", id: "login", request: { method: "GET", path: "/login" } },
+        { kind: "request", id: "get", request: { method: "GET", path: "/thing", headers: { Cookie: "mine=1" } } }
+      ]
+    };
+    await new HttpScenarioClient().run(scenario, {
+      proxyUrl: url,
+      instanceDriver: driver,
+      instances: [],
+      requestTimeoutMs: 5000
+    });
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.split(",")).toHaveLength(1);
+  });
+});

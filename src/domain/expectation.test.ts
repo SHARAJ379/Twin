@@ -86,6 +86,31 @@ describe("evaluateExpectation", () => {
     expect(result.passed).toBe(false);
   });
 
+  /**
+   * The failure message goes into failedExpectations, from there into a
+   * finding's summary and into report.json, results.json, report.md, the fix
+   * prompt and the terminal. It used to quote the response value verbatim, so
+   * a scenario asserting on a token put the real token in all of them.
+   */
+  it("does not put the real response value in the failure message for a secret field", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.token": "expected-token" } },
+      { status: 200, body: { token: "eyJSECRETJWT.payload.sig" } }
+    );
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).not.toContain("eyJSECRETJWT");
+    expect(result.failures.join(" ")).toContain("$.token");
+  });
+
+  it("still names the field and shows an ordinary value, so a mismatch stays diagnosable", () => {
+    const result = evaluateExpectation(
+      { jsonPath: { "$.name": "test-item" } },
+      { status: 200, body: { name: "other-item" } }
+    );
+    expect(result.failures[0]).toContain("$.name");
+    expect(result.failures[0]).toContain("other-item");
+  });
+
   it("does not treat an array as equal to an object with the same indexes", () => {
     const result = evaluateExpectation(
       { jsonPath: { "$.v": ["a"] } },

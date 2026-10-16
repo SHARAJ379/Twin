@@ -198,6 +198,45 @@ describe("FsWorkspaceManager", () => {
   });
 
   /**
+   * WorkspaceOptions calls `ignore` a list of *top-level* names, and the stack
+   * lists are build output at a project's root: dist, build, bin, tmp, log,
+   * storage. Matched at any depth they took real source with them - src/build/,
+   * lib/dist/ - and the app failed to boot on a missing module, which reads as
+   * Twin's workspace simply not working.
+   */
+  it("applies the stack's ignore list only at the top level", async () => {
+    await mkdir(path.join(sourceDir, "src", "build"), { recursive: true });
+    await writeFile(path.join(sourceDir, "src", "build", "compiler.js"), "module.exports = 1");
+    await mkdir(path.join(sourceDir, "lib", "dist"), { recursive: true });
+    await writeFile(path.join(sourceDir, "lib", "dist", "index.js"), "module.exports = 2");
+    await mkdir(path.join(sourceDir, "dist"), { recursive: true });
+    await writeFile(path.join(sourceDir, "dist", "bundle.js"), "module.exports = 3");
+
+    const manager = new FsWorkspaceManager(root);
+    const pristineDir = await manager.preparePristine(sourceDir, { link: [], ignore: ["dist", "build"] });
+    const dir = await manager.cloneForInstance(pristineDir, "A");
+
+    expect(await readFile(path.join(dir, "src", "build", "compiler.js"), "utf8")).toBe("module.exports = 1");
+    expect(await readFile(path.join(dir, "lib", "dist", "index.js"), "utf8")).toBe("module.exports = 2");
+    // the real top-level build output is still skipped
+    await expect(readFile(path.join(dir, "dist", "bundle.js"), "utf8")).rejects.toThrow();
+  });
+
+  it("still skips .git, .twin and node_modules at any depth", async () => {
+    await mkdir(path.join(sourceDir, "nested", "node_modules"), { recursive: true });
+    await writeFile(path.join(sourceDir, "nested", "node_modules", "dep.js"), "x");
+    await mkdir(path.join(sourceDir, "nested", ".git"), { recursive: true });
+    await writeFile(path.join(sourceDir, "nested", ".git", "HEAD"), "x");
+
+    const manager = new FsWorkspaceManager(root);
+    const pristineDir = await manager.preparePristine(sourceDir, { link: [], ignore: [] });
+    const dir = await manager.cloneForInstance(pristineDir, "A");
+
+    await expect(readFile(path.join(dir, "nested", "node_modules", "dep.js"), "utf8")).rejects.toThrow();
+    await expect(readFile(path.join(dir, "nested", ".git", "HEAD"), "utf8")).rejects.toThrow();
+  });
+
+  /**
    * npm workspaces and monorepos have a node_modules per package. The copy
    * filter drops every one of them by name, so linking only the root one back
    * left the nested packages with no dependencies at all and the app couldn't

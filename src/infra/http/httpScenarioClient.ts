@@ -213,7 +213,18 @@ export class HttpScenarioClient implements ScenarioClient {
       const rendered = renderTemplateDeep(step.request, variables, helpers) as RequestStep["request"];
       const url = new URL(rendered.path, ctx.proxyUrl);
 
-      const headers: Record<string, string> = { ...rendered.headers };
+      // Lowercased on the way in, so every assignment below addresses the same
+      // key the scenario's own header does. HTTP header names are
+      // case-insensitive and fetch lowercases them anyway, but this object is
+      // a plain map: a scenario sending `Content-Type: application/vnd.api+json`
+      // with a `json:` body kept both keys, and fetch joined them into
+      // "application/vnd.api+json, application/json" - which servers reject or
+      // misparse, and Twin then reported as a multi-instance failure. The same
+      // held for a scenario-set `Cookie` against the jar's own.
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries(rendered.headers ?? {})) {
+        headers[name.toLowerCase()] = value;
+      }
       // url.pathname, not rendered.path: the jar path-matches against Path=,
       // and a scenario path carrying a query string ("/cart?coupon=X") never
       // matches Path=/cart - the cookie would go unsent and Twin would report

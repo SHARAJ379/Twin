@@ -45,6 +45,11 @@ export function validateTwinConfig(data: unknown): TwinConfigValidationResult {
   for (const field of STRING_FIELDS) {
     if (field in obj && typeof obj[field] !== "string") {
       errors.push({ message: `"${field}" must be a string`, path: `/${field}` });
+    } else if (field in obj && (obj[field] as string).trim().length === 0) {
+      // An empty string is not "unset": it was accepted and then handed to a
+      // shell, so `"start": ""` ran an empty command and reported itself as
+      // the app crashing on boot.
+      errors.push({ message: `"${field}" must not be empty`, path: `/${field}` });
     }
   }
   for (const field of NUMBER_FIELDS) {

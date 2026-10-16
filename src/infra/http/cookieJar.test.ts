@@ -73,6 +73,17 @@ describe("CookieJar", () => {
     expect(jar.headerFor("default", "/")).toBe("sid=second");
   });
 
+  it("sends the most specific path first, not whichever arrived first", () => {
+    const jar = new CookieJar();
+    // Site-wide cookie first, so insertion order is the wrong order.
+    jar.ingest("default", ["sid=root; Path=/"]);
+    jar.ingest("default", ["sid=admin; Path=/admin"]);
+
+    // RFC 6265 5.4: longest path first, so a server reading only the first
+    // of two same-named cookies gets the specific one.
+    expect(jar.headerFor("default", "/admin/users")).toBe("sid=admin; sid=root");
+  });
+
   it("expires only the matching path's cookie", () => {
     const jar = new CookieJar();
     jar.ingest("default", ["sid=root; Path=/", "sid=admin; Path=/admin"]);

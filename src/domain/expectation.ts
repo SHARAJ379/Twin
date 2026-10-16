@@ -1,4 +1,5 @@
 import { extractJsonPath, JsonPathError } from "./jsonPath.js";
+import { redactValueForMessage } from "./redaction.js";
 import type { Expectation } from "./scenario.js";
 
 export interface ExpectationResult {
@@ -59,7 +60,12 @@ export function evaluateExpectation(expect: Expectation | undefined, actual: Act
       try {
         const actualValue = extractJsonPath(actual.body, path);
         if (!deepEqual(actualValue, expected)) {
-          failures.push(`expected ${path} to equal ${JSON.stringify(expected)}, got ${JSON.stringify(actualValue)}`);
+          // Redacted, because this message is quoted in failedExpectations, a
+          // finding's summary, report.json/md, the fix prompt and the terminal
+          // - all of which are meant to be safe to paste publicly.
+          failures.push(
+            `expected ${path} to equal ${redactValueForMessage(expected, path)}, got ${redactValueForMessage(actualValue, path)}`
+          );
         }
       } catch (err) {
         failures.push(err instanceof JsonPathError ? err.message : String(err));

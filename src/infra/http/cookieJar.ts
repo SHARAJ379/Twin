@@ -83,9 +83,12 @@ export class CookieJar {
     const jar = this.byClient.get(client);
     if (jar === undefined) return undefined;
     const now = Date.now();
-    const applicable = [...jar.values()].filter(
-      (c) => (c.expiresAt === undefined || c.expiresAt > now) && pathMatches(c.path, requestPath)
-    );
+    const applicable = [...jar.values()]
+      .filter((c) => (c.expiresAt === undefined || c.expiresAt > now) && pathMatches(c.path, requestPath))
+      // Longest path first (RFC 6265 5.4): a server reading only the first of
+      // two same-named cookies has to see the more specific one, and insertion
+      // order is not that - it's whichever Set-Cookie happened to arrive first.
+      .sort((a, b) => b.path.length - a.path.length);
     return applicable.length === 0 ? undefined : applicable.map((c) => `${c.name}=${c.value}`).join("; ");
   }
 

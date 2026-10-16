@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { diffSnapshots } from "../../domain/workspaceDiff.js";
-import { FULL_HASH_LIMIT, FsWorkspaceManager, relativeInside } from "./fsWorkspaceManager.js";
+import { FULL_HASH_LIMIT, FsWorkspaceManager, relativeInside, stripExtendedLengthPrefix } from "./fsWorkspaceManager.js";
 
 /** Both snapshots get this exact mtime, so only content can explain a diff. */
 const FROZEN_TIME = new Date(1_700_000_000_000);
@@ -20,24 +20,36 @@ const FROZEN_TIME = new Date(1_700_000_000_000);
  * node_modules and blamed the app.
  */
 describe("relativeInside", () => {
-  // String.raw throughout: these are Windows paths, and the point of the test
-  // is the exact backslashes.
-  it("handles a plain path, the way Node 22+ reports it", () => {
-    expect(relativeInside(String.raw`C:\proj`, String.raw`C:\proj\node_modules`)).toBe("node_modules");
-    expect(relativeInside(String.raw`C:\proj`, String.raw`C:\proj`)).toBe("");
+  /**
+   * The prefix stripping is pure string work and the shape it handles only
+   * ever occurs on Windows - so it's tested here on every platform, where a
+   * `relativeInside` test written with Windows paths could only pass on
+   * Windows (POSIX `path` reads `C:\proj\x` as one filename, not a path).
+   */
+  it("strips the extended-length prefix Node 20 on Windows reports", () => {
+    expect(stripExtendedLengthPrefix(String.raw`\\?\C:\proj\node_modules`)).toBe(String.raw`C:\proj\node_modules`);
+    expect(stripExtendedLengthPrefix(String.raw`\\?\C:\proj`)).toBe(String.raw`C:\proj`);
+    // A UNC path keeps its leading \\ once the prefix comes off.
+    expect(stripExtendedLengthPrefix(String.raw`\\?\UNC\server\share\proj`)).toBe(String.raw`\\server\share\proj`);
   });
 
-  it("handles the extended-length path Node 20 on Windows reports", () => {
-    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\proj\node_modules`)).toBe("node_modules");
-    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\proj`)).toBe("");
-    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\proj\packages\web\node_modules`)).toBe(
+  it("leaves a path with no such prefix alone", () => {
+    expect(stripExtendedLengthPrefix(String.raw`C:\proj\node_modules`)).toBe(String.raw`C:\proj\node_modules`);
+    expect(stripExtendedLengthPrefix("/proj/node_modules")).toBe("/proj/node_modules");
+  });
+
+  it("resolves a path inside the project, in this platform's own path shape", () => {
+    const base = path.join(path.sep, "proj");
+    expect(relativeInside(base, path.join(base, "node_modules"))).toBe("node_modules");
+    expect(relativeInside(base, base)).toBe("");
+    expect(relativeInside(base, path.join(base, "packages", "web", "node_modules"))).toBe(
       path.join("packages", "web", "node_modules")
     );
   });
 
   it("returns undefined for a path outside the project, never an empty relative path", () => {
-    expect(relativeInside(String.raw`C:\proj`, String.raw`C:\elsewhere\node_modules`)).toBeUndefined();
-    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\elsewhere`)).toBeUndefined();
+    const base = path.join(path.sep, "proj");
+    expect(relativeInside(base, path.join(path.sep, "elsewhere", "node_modules"))).toBeUndefined();
   });
 });
 

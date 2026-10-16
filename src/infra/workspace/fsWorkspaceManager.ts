@@ -114,7 +114,7 @@ async function exists(target: string): Promise<boolean> {
  * node_modules at all, which it then reported as the app crashing on boot),
  * and the top-level-only ignore check never matched.
  */
-function stripExtendedLengthPrefix(p: string): string {
+export function stripExtendedLengthPrefix(p: string): string {
   if (p.startsWith("\\\\?\\UNC\\")) return `\\\\${p.slice(8)}`;
   if (p.startsWith("\\\\?\\")) return p.slice(4);
   return p;

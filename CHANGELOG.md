@@ -9,6 +9,17 @@ shift between minor versions.
 
 ### Fixed
 
+- Instances get their dependencies again on Node 20, which is the Node version this package
+  promises to support. `fs.cp`'s filter reports each path as an extended-length `\?\C:\...`
+  path on Node 20 for Windows and as a plain path on Node 22+, so computing a project-relative
+  path from it produced the whole absolute path instead - and every decision made from that
+  path inverted. Dependency directories were linked at a nonsense location, leaving each
+  instance without its `node_modules`, and the app's resulting "Cannot find module" was
+  reported as the app crashing on boot. The stack's top-level-only ignore list never matched
+  either. A failed link is now a `E_WORKSPACE_LINK_FAILED` error naming the directory rather
+  than something swallowed, so a workspace can never again start an app without the
+  dependencies the project has.
+
 - Expectation-failure messages no longer quote the response verbatim. A failing `jsonPath:`
   check built `expected $.token to equal "a", got "<the real token>"`, and that string goes into
   `failedExpectations`, a finding's `summary`, report.json, results.json, report.md, the

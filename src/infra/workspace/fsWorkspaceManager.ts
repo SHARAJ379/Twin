@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { cp, mkdir, open, readdir, rm, stat, symlink } from "node:fs/promises";
+import { cp, lstat, mkdir, open, readdir, rm, stat, symlink } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
+import { TwinError } from "../../domain/errors.js";
 import type { InstanceId } from "../../domain/instance.js";
 import type { FileEntry } from "../../domain/workspaceDiff.js";
 import type { WorkspaceManager, WorkspaceOptions } from "../../ports/workspaceManager.js";
@@ -94,6 +95,42 @@ async function walk(dir: string, baseDir: string, skip: ReadonlySet<string>, out
   }
 }
 
+async function exists(target: string): Promise<boolean> {
+  try {
+    await lstat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Node 20 on Windows hands `fs.cp`'s filter extended-length paths
+ * (`\\?\C:\...`), while Node 22+ hands it plain ones. `path.relative` against
+ * a plain base then yields no relative path at all - it returns the whole
+ * `\\?\C:\...` string - so every decision made from a project-relative path
+ * silently inverted on the oldest Node this package supports: dependency
+ * directories were "linked" at a nonsense path (leaving the app with no
+ * node_modules at all, which it then reported as the app crashing on boot),
+ * and the top-level-only ignore check never matched.
+ */
+function stripExtendedLengthPrefix(p: string): string {
+  if (p.startsWith("\\\\?\\UNC\\")) return `\\\\${p.slice(8)}`;
+  if (p.startsWith("\\\\?\\")) return p.slice(4);
+  return p;
+}
+
+/**
+ * Where `source` sits inside `baseDir`, as a project-relative path. "" for
+ * `baseDir` itself, and undefined if it isn't inside it at all - which must
+ * never silently read as "at the root".
+ */
+export function relativeInside(baseDir: string, source: string): string | undefined {
+  const relativePath = path.relative(baseDir, stripExtendedLengthPrefix(source));
+  if (path.isAbsolute(relativePath) || relativePath.startsWith("..")) return undefined;
+  return relativePath;
+}
+
 interface PristineRecord {
   sourceDir: string;
   options: WorkspaceOptions;
@@ -137,7 +174,8 @@ export class FsWorkspaceManager implements WorkspaceManager {
       recursive: true,
       filter: (source) => {
         const name = path.basename(source);
-        const relativePath = path.relative(resolvedSource, source);
+        const relativePath = relativeInside(resolvedSource, source);
+        if (relativePath === undefined) return true; // not under the source tree: not ours to judge
         if (link.has(name)) {
           linkPaths.push(relativePath);
           return false;
@@ -189,14 +227,27 @@ export class FsWorkspaceManager implements WorkspaceManager {
     for (const relativePath of record.linkPaths) {
       const target = path.join(record.sourceDir, relativePath);
       const linkPath = path.join(dest, relativePath);
+
+      // Nothing at `target` to link (the project has no node_modules yet, or
+      // never had one) - fine, skip it.
+      if (!(await exists(target))) continue;
+
+      // A nested link (packages/web/node_modules) needs its parent to exist;
+      // the parent is in the pristine tree, but only if it held something
+      // else worth copying.
+      await mkdir(path.dirname(linkPath), { recursive: true });
       try {
-        // A nested link (packages/web/node_modules) needs its parent to exist;
-        // the parent is in the pristine tree, but only if it held something
-        // else worth copying.
-        await mkdir(path.dirname(linkPath), { recursive: true });
         await symlink(target, linkPath, process.platform === "win32" ? "junction" : "dir");
-      } catch {
-        // Nothing at `target` to link (e.g. the project has no node_modules yet) - fine, skip it.
+      } catch (err) {
+        // Deliberately fatal, where this used to be swallowed. A workspace
+        // missing the dependencies that exist in the project boots into
+        // "Cannot find module ..." and reports itself as the app crashing -
+        // a diagnosis that sends you looking at your app for a fault in Twin.
+        throw new TwinError("E_WORKSPACE_LINK_FAILED", `Could not link "${relativePath}" into instance ${instance}'s workspace.`, {
+          hint: "The instance would start without its dependencies and crash on boot. On Windows this usually means the workspace and the project are on different drives.",
+          details: { instance, target, linkPath },
+          cause: err
+        });
       }
     }
 

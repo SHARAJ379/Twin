@@ -5,10 +5,41 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { diffSnapshots } from "../../domain/workspaceDiff.js";
-import { FULL_HASH_LIMIT, FsWorkspaceManager } from "./fsWorkspaceManager.js";
+import { FULL_HASH_LIMIT, FsWorkspaceManager, relativeInside } from "./fsWorkspaceManager.js";
 
 /** Both snapshots get this exact mtime, so only content can explain a diff. */
 const FROZEN_TIME = new Date(1_700_000_000_000);
+
+/**
+ * Every workspace decision is made from a project-relative path, and the path
+ * `fs.cp`'s filter hands over is not the same shape on every supported Node:
+ * Node 20 on Windows prefixes it with `\?\`, Node 22+ does not. Tested
+ * directly because the Node running these tests only exercises one of the two,
+ * and the one it doesn't exercise is the one that shipped broken - dependency
+ * directories linked at a nonsense path, so every instance booted without its
+ * node_modules and blamed the app.
+ */
+describe("relativeInside", () => {
+  // String.raw throughout: these are Windows paths, and the point of the test
+  // is the exact backslashes.
+  it("handles a plain path, the way Node 22+ reports it", () => {
+    expect(relativeInside(String.raw`C:\proj`, String.raw`C:\proj\node_modules`)).toBe("node_modules");
+    expect(relativeInside(String.raw`C:\proj`, String.raw`C:\proj`)).toBe("");
+  });
+
+  it("handles the extended-length path Node 20 on Windows reports", () => {
+    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\proj\node_modules`)).toBe("node_modules");
+    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\proj`)).toBe("");
+    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\proj\packages\web\node_modules`)).toBe(
+      path.join("packages", "web", "node_modules")
+    );
+  });
+
+  it("returns undefined for a path outside the project, never an empty relative path", () => {
+    expect(relativeInside(String.raw`C:\proj`, String.raw`C:\elsewhere\node_modules`)).toBeUndefined();
+    expect(relativeInside(String.raw`C:\proj`, String.raw`\\?\C:\elsewhere`)).toBeUndefined();
+  });
+});
 
 describe("FsWorkspaceManager", () => {
   let sourceDir: string;

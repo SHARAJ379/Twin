@@ -9,6 +9,17 @@ shift between minor versions.
 
 ### Fixed
 
+- The tracer finds suspects in CRLF files again - which is every file in a Windows checkout,
+  since git converts line endings on the way out (`core.autocrlf`). Lines were split on a bare
+  newline, leaving a carriage return at the end of each one, and that defeated every rule
+  anchored with `$`: a JavaScript `.` matches anything except a line terminator, so a pattern
+  ending `(//.*)?$` could not cross the carriage return to reach end-of-input. The lines it
+  silently skipped were exactly the ones carrying an explanatory comment - `const items = [];`
+  still matched, `const items = []; // { id, name }` did not - so on Windows the seven node,
+  python, ruby and php rules that tolerate a trailing comment found nothing, and a failing
+  check was reported with no "likely cause" line at all. Go was unaffected: its pattern has no
+  `$` for a carriage return to get in front of.
+
 - A check whose request came back `401`/`403` no longer reports the store it never reached as
   missing. `data-consistency` used to say "a record created via one instance could not be read
   back" for a read-back the app refused at the door - a claim Twin never tested, since no

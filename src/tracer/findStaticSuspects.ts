@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { Suspect } from "../domain/suspect.js";
 import type { SuspectRule } from "../domain/suspectRule.js";
+import { splitLines } from "./sourceLines.js";
 
 /** Runs every given static rule (§7.6) against every given source file. Rules come from the project's stack profile. */
 export async function findStaticSuspects(
@@ -19,7 +20,7 @@ export async function findStaticSuspects(
     } catch {
       continue; // vanished or unreadable mid-scan - skip it
     }
-    const lines = content.split("\n");
+    const lines = splitLines(content);
     const relativePath = path.relative(projectDir, file).split(path.sep).join("/");
 
     for (const rule of rules) {

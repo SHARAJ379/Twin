@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { Suspect, SuspectKind } from "../domain/suspect.js";
 import type { WorkspaceDiff } from "../domain/workspaceDiff.js";
+import { splitLines } from "./sourceLines.js";
 
 const SQLITE_EXTENSIONS = new Set([".db", ".sqlite", ".sqlite3"]);
 
@@ -40,7 +41,7 @@ export async function findDynamicSuspects(projectDir: string, diff: WorkspaceDif
       } catch {
         continue;
       }
-      const lines = content.split("\n");
+      const lines = splitLines(content);
       const relativePath = path.relative(projectDir, file).split(path.sep).join("/");
 
       for (let i = 0; i < lines.length; i++) {

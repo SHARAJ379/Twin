@@ -58,7 +58,7 @@ export const moduleStateRule: SuspectRule = {
     "a file-level array only lives for the current request in classic PHP, and across requests in a long-running server it's per-process either way - neither shares state with the other instance",
   test: (line) => MODULE_STATE_PATTERN.test(line),
   fixtures: {
-    matches: ["$items = [];", "static $cache = array();"],
+    matches: ["$items = [];", "static $cache = array();", "$items = []; // { id, name }"],
     nonMatches: ["  $items = [];", "$items = load_items();", "$config = ['port' => 8000];"]
   }
 };

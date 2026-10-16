@@ -36,6 +36,22 @@ describe("findStaticSuspects", () => {
     expect(suspects.filter((s) => s.kind === "module-state")).toEqual([]);
   });
 
+  it("flags the same line in a CRLF file, trailing comment and all", async () => {
+    // A Windows checkout is CRLF (git's core.autocrlf), and a stray `\r` at
+    // the end of a line used to defeat every `$`-anchored rule whose line
+    // carried a trailing comment - which is most real code. On the fixture
+    // this is copied from, that silently cost all four findings their
+    // suspects on Windows while passing everywhere else. See sourceLines.ts.
+    const file = path.join(projectDir, "server.js");
+    await writeFile(file, "// comment\r\nconst sessions = {}; // sessionId -> { email }\r\nconst items = []; // { id, name }\r\n");
+
+    const suspects = await findStaticSuspects([file], projectDir, nodeStack.rules);
+
+    expect(suspects.filter((s) => s.kind === "module-state").map((s) => s.line)).toEqual([2, 3]);
+    // The snippet is what the report prints, so it must not carry the `\r`.
+    expect(suspects.every((s) => !s.snippet.includes("\r"))).toBe(true);
+  });
+
   it("returns [] for a clean file with no matching patterns", async () => {
     const file = path.join(projectDir, "server.js");
     await writeFile(file, "app.get('/health', (req, res) => res.sendStatus(200));\n");

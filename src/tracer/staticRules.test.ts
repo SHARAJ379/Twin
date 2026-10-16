@@ -2,6 +2,36 @@ import { describe, expect, it } from "vitest";
 
 import type { SuspectRule } from "../domain/suspectRule.js";
 import { stackProfiles } from "../domain/stacks/index.js";
+import { splitLines } from "./sourceLines.js";
+
+/**
+ * The fixtures are written here as LF strings, but on Windows git hands the
+ * tracer the same code as CRLF (`core.autocrlf`), and that used to defeat
+ * every `$`-anchored rule on any line carrying a trailing comment - see
+ * sourceLines.ts. So each fixture is proved twice, once per line ending: the
+ * rules have to behave identically on a Windows checkout.
+ *
+ * Each line is *terminated*, not just joined: a fixture is usually a single
+ * line, so inserting separators between lines would leave it with no line
+ * ending at all and quietly prove nothing.
+ */
+const LINE_ENDINGS = [
+  { name: "LF", ending: "\n" },
+  { name: "CRLF", ending: "\r\n" }
+] as const;
+
+/** The fixture as a file with this line ending - every line terminated, as a real file's are. */
+function asFile(fixture: string, ending: string): string {
+  return fixture
+    .split("\n")
+    .map((line) => line + ending)
+    .join("");
+}
+
+/** What the tracer itself does to a file before a rule ever sees a line. */
+function rulesFire(rule: SuspectRule, fixture: string): boolean {
+  return splitLines(fixture).some((line) => rule.test(line, fixture));
+}
 
 /**
  * Every rule, for every stack, carries its own proof. This is the only
@@ -22,17 +52,15 @@ describe.each(allRules)("static rule: $stackId / $rule.id", ({ rule }) => {
     expect(rule.fixtures.nonMatches.length).toBeGreaterThan(0);
   });
 
-  it("fires on every `matches` fixture", () => {
+  it.each(LINE_ENDINGS)("fires on every `matches` fixture ($name)", ({ ending }) => {
     for (const fixture of rule.fixtures.matches) {
-      const fired = fixture.split("\n").some((line) => rule.test(line, fixture));
-      expect(fired, `expected rule ${rule.id} to match:\n${fixture}`).toBe(true);
+      expect(rulesFire(rule, asFile(fixture, ending)), `expected rule ${rule.id} to match:\n${fixture}`).toBe(true);
     }
   });
 
-  it("fires on none of the `nonMatches` fixtures", () => {
+  it.each(LINE_ENDINGS)("fires on none of the `nonMatches` fixtures ($name)", ({ ending }) => {
     for (const fixture of rule.fixtures.nonMatches) {
-      const fired = fixture.split("\n").some((line) => rule.test(line, fixture));
-      expect(fired, `expected rule ${rule.id} NOT to match:\n${fixture}`).toBe(false);
+      expect(rulesFire(rule, asFile(fixture, ending)), `expected rule ${rule.id} NOT to match:\n${fixture}`).toBe(false);
     }
   });
 });

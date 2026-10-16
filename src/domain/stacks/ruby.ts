@@ -13,7 +13,16 @@ export const sharedStateRule: SuspectRule = {
     "a class variable, global or constant holding a hash/array is per-process state - another instance, or this one after a restart, starts with an empty one",
   test: (line) => SHARED_STATE_PATTERN.test(line),
   fixtures: {
-    matches: ["@@sessions = {}", "$cache = {}", "ITEMS = []", "@@notes = Hash.new", "SEEN = Set.new"],
+    matches: [
+      "@@sessions = {}",
+      "$cache = {}",
+      "ITEMS = []",
+      "@@notes = Hash.new",
+      "SEEN = Set.new",
+      // The trailing comment matters: the pattern tolerates one, and a line
+      // like this is what examples/broken-ruby actually has.
+      "$sessions = {} # sessionId -> email"
+    ],
     nonMatches: ["  @@sessions = {}", "CONFIG = { port: 3000 }", "@items = []", "ITEMS = load_items"]
   }
 };
@@ -28,7 +37,7 @@ export const counterRule: SuspectRule = {
     "a per-process counter restarts from its initial value in every process - two instances hand out the same ids, so records collide or overwrite each other",
   test: (line) => COUNTER_PATTERN.test(line),
   fixtures: {
-    matches: ["@@next_id = 1", "$counter = 0"],
+    matches: ["@@next_id = 1", "$counter = 0", "@@next_id = 1 # ids start at 1"],
     nonMatches: ["  @@next_id = 1", "PORT = 3000 # config, not state", "@next_id = 1"]
   }
 };

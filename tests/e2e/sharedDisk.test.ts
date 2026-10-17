@@ -96,7 +96,8 @@ describe("a store that is only shared because both instances are on one disk", (
   it("does not call an app storing items in /tmp/twin-demo-items.json safe", async () => {
     // The audit's own path, made unique so parallel runs can't share it.
     const file = `/tmp/twin-demo-items-${randomUUID()}.json`;
-    cleanup.push(path.resolve(file));
+    // Where the app's "/tmp" lands: on Windows, the workspace's drive.
+    cleanup.push(path.join(path.parse(os.tmpdir()).root, file));
 
     const { exitCode, report } = await runApp(file, {});
 

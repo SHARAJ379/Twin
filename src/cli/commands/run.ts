@@ -284,7 +284,17 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     }
     const sharedDiskPlan = {
       envPaths: envPaths.map((p) => p.path),
-      tmpDirs: [...new Set([os.tmpdir(), path.resolve("/tmp"), ...(process.platform === "win32" ? [] : ["/var/tmp"])])],
+      // On Windows "/tmp" is "\tmp" on the current drive - and an instance's
+      // current drive is the workspace's, under os.tmpdir(), which needn't be
+      // Twin's (a CI checkout on D:, a temp dir on C:).
+      tmpDirs: [
+        ...new Set([
+          os.tmpdir(),
+          path.resolve("/tmp"),
+          path.join(path.parse(os.tmpdir()).root, "tmp"),
+          ...(process.platform === "win32" ? [] : ["/var/tmp"])
+        ])
+      ],
       exclude: [options.projectDir, path.join(os.tmpdir(), `twin-${run.id}`), ...declaredShared]
     };
 

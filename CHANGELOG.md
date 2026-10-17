@@ -9,6 +9,9 @@ shift between minor versions.
 
 ### Fixed
 
+- Fix prompts read as sentences and copy cleanly. The summary ran into the next sentence with no
+  full stop ("...(status 401) Fix the underlying issue..."), and the terminal wrapped the prompt
+  in quotes although it contains its own; it's now an indented block.
 - One session bug is reported as one bug. On `examples/broken-express` the summary said "4 of 4
   checks failed" and printed four fix prompts, though three of those checks were only 401'd by
   the session bug. Checks with `blockedBy: "auth"` are now shown as `BLOCKED` with no fix prompt

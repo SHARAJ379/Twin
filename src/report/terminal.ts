@@ -30,7 +30,9 @@ function renderFinding(finding: Finding, findings: readonly Finding[], profile: 
   if (prompt) {
     lines.push("");
     lines.push("  Fix prompt (paste into Claude Code):");
-    lines.push(`    "${buildFixPrompt(finding, profile)}"`);
+    // An indented block, not a quoted string: the prompt has double quotes of
+    // its own, and wrapping quotes made it awkward to copy.
+    lines.push(`    ${buildFixPrompt(finding, profile)}`);
   }
   return lines;
 }

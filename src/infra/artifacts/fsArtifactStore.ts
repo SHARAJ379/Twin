@@ -33,17 +33,23 @@ const TOKENS_HELD_HERE = new Set<string>();
  * forever, with `twin clean` unable to help. Our own pid is decided by the
  * tokens this process actually holds; any other live pid has to still look
  * like the process that wrote the lock. A command line the OS won't reveal
- * counts as a match: refusing wrongly costs a retry, and running alongside a
- * real peer costs a corrupted `.twin/`.
+ * (another user's process, often, on Windows) counts as held - running
+ * alongside a real peer costs a corrupted `.twin/` - but as "unconfirmed":
+ * the refusal says so and names `twin clean --unlock`, so a pid that is
+ * merely unreadable can never lock a project out for good.
  */
-function isHeldByLiveRun(lock: LockFileContents): boolean {
-  if (lock.released === true) return false;
-  if (lock.pid === process.pid) return TOKENS_HELD_HERE.has(lock.token);
-  if (!isProcessAlive(lock.pid)) return false;
-  if (lock.command === undefined) return true;
+type HolderState = "free" | "running" | "unconfirmed";
+
+function holderState(lock: LockFileContents): HolderState {
+  if (lock.released === true) return "free";
+  if (lock.pid === process.pid) return TOKENS_HELD_HERE.has(lock.token) ? "running" : "free";
+  if (!isProcessAlive(lock.pid)) return "free";
+  if (lock.command === undefined) return "unconfirmed";
   const live = getCommandLine(lock.pid);
-  if (live === undefined) return true;
-  return process.platform === "win32" ? live.toLowerCase().includes(lock.command.toLowerCase()) : live.includes(lock.command);
+  if (live === undefined) return "unconfirmed";
+  const matches =
+    process.platform === "win32" ? live.toLowerCase().includes(lock.command.toLowerCase()) : live.includes(lock.command);
+  return matches ? "running" : "free";
 }
 
 /** `lock.<generation>` - see acquireLock for why the lock is a series of files, not one. */
@@ -146,15 +152,21 @@ export class FsArtifactStore implements ArtifactStore {
       command: OWN_COMMAND
     };
 
-    const held = (existing: LockFileContents): TwinError =>
-      new TwinError("E_LOCKED", `Another Twin run (pid ${existing.pid}) appears to be in progress in this project.`, {
-        hint: `Wait for it to finish. If you're sure no other run is in progress, \`twin clean\` clears a lock whose run has died, and deleting ${path.join(
-          this.root,
-          "lock.*"
-        )} clears any lock.`,
-        details: { pid: existing.pid, startedAt: existing.startedAt },
-        exitCode: 2
-      });
+    const held = (existing: LockFileContents, state: HolderState): TwinError =>
+      new TwinError(
+        "E_LOCKED",
+        state === "unconfirmed"
+          ? `This project's Twin lock is held by pid ${existing.pid}, which is still running, but Twin can't confirm it is a Twin run (the OS won't show its command line).`
+          : `Another Twin run (pid ${existing.pid}) appears to be in progress in this project.`,
+        {
+          hint: `Wait for it to finish. If you're sure no other Twin run is in progress here, \`twin clean --unlock\` removes the lock (as does deleting ${path.join(
+            this.root,
+            "lock.*"
+          )}).`,
+          details: { pid: existing.pid, startedAt: existing.startedAt, holder: state },
+          exitCode: 2
+        }
+      );
     const contended = (): TwinError =>
       new TwinError("E_LOCKED", "Could not take this project's Twin lock.", {
         hint: "Another `twin run` is starting at the same moment. Try again, or run `twin clean`.",
@@ -171,8 +183,9 @@ export class FsArtifactStore implements ArtifactStore {
           // tells them apart, and treating a young one as stale is how this
           // lock once let two runs in.
           if (top.ageMs < UNREADABLE_LOCK_GRACE_MS) throw contended();
-        } else if (isHeldByLiveRun(top.contents)) {
-          throw held(top.contents);
+        } else {
+          const state = holderState(top.contents);
+          if (state !== "free") throw held(top.contents, state);
         }
       }
 
@@ -204,14 +217,27 @@ export class FsArtifactStore implements ArtifactStore {
   /**
    * `twin clean`'s half of the lock: removes it when no live run holds it,
    * judged exactly as acquireLock judges it. Says what it found either way.
+   * `force` (`twin clean --unlock`) removes it whatever holds it: the way out
+   * when the holder can't be confirmed and the user knows it isn't Twin.
    */
-  async clearStaleLock(): Promise<{ cleared: boolean; holder?: { pid: number; startedAt: string } }> {
+  async clearStaleLock(
+    options: { force?: boolean } = {}
+  ): Promise<{ cleared: boolean; holder?: { pid: number; startedAt: string; confirmed: boolean } }> {
     const top = await this.readTopLock();
     if (top === undefined) return { cleared: false };
-    if (top.contents !== null && isHeldByLiveRun(top.contents)) {
-      return { cleared: false, holder: { pid: top.contents.pid, startedAt: top.contents.startedAt } };
+    if (options.force !== true) {
+      if (top.contents !== null) {
+        const state = holderState(top.contents);
+        if (state !== "free") {
+          return {
+            cleared: false,
+            holder: { pid: top.contents.pid, startedAt: top.contents.startedAt, confirmed: state === "running" }
+          };
+        }
+      } else if (top.ageMs < UNREADABLE_LOCK_GRACE_MS) {
+        return { cleared: false };
+      }
     }
-    if (top.contents === null && top.ageMs < UNREADABLE_LOCK_GRACE_MS) return { cleared: false };
     const generations = await this.lockGenerations();
     await Promise.all(generations.map((g) => rm(this.lockPath(g), { force: true }).catch(() => undefined)));
     return { cleared: !(top.contents?.released ?? false) };

@@ -297,7 +297,15 @@ terminal, a machine that went to sleep.
 
 ```
 --project <dir>    project directory to clean (default: cwd)
+--unlock           also remove the project's lock, even if its holder can't be ruled out
 ```
+
+It also removes the project's lock when the run that took it has died. If
+the lock's process is still alive but Twin can't confirm it's a Twin run (on
+Windows the OS often won't show another process's command line), `twin run`
+refuses with `E_LOCKED` and says so, and a plain `twin clean` leaves the lock
+alone. Once you're sure no Twin run is in progress, `twin clean --unlock`
+removes it.
 
 It only kills a process it can still positively identify as one Twin started.
 Operating systems reuse process ids, so a pid recorded by an old run may belong
@@ -400,7 +408,21 @@ environment looks like it points a datastore somewhere non-local - a
 `DATABASE_URL`, a `DB_HOST`, a seed list - because it writes real test data.
 The refusal names the host *and* which of the four env sources set it, and
 `--allow-remote-host <host>` vouches for one without switching the check off
-for everything else (`--allow-remote` does that). And everything Twin writes down is redacted
+for everything else (`--allow-remote` does that).
+
+What counts as "local" is a deliberate line, and worth knowing if your
+network has short internal hostnames. A dotted name or an IP is remote unless
+it's loopback, `*.localhost`, an mDNS `*.local`, or a reserved test name
+(`example.com`, `*.test`, `*.example`, `*.invalid`). A **short, dotless name**
+(`db`, `redis`, `analytics`) counts as a local container, because that's what it
+is in every docker-compose project. That includes a Kubernetes service or
+Tailscale short name, which Twin can't tell apart from a container. A short name
+that says it's a shared environment (`prod-db`, `staging-db`, `stg-postgres`,
+`uat_db`, `primary`, `live-redis`) is still refused, and so is a
+`*.svc.cluster.local` address. If your dev env points a short name at a real
+shared database, Twin won't catch it, so use a local one.
+
+And everything Twin writes down is redacted
 first: reports and `results.json` keep an allowlist of headers with cookie
 values masked, and the instance logs (plus the tail printed on a boot failure,
 which lands in CI output) have the run's own secrets, URL credentials and

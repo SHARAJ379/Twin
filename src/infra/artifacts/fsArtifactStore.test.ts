@@ -9,6 +9,13 @@ import { TwinError } from "../../domain/errors.js";
 import type { Lock } from "../../ports/artifactStore.js";
 import { FsArtifactStore } from "./fsArtifactStore.js";
 
+// Lets a test play an OS that won't reveal a process's command line.
+const commandLine = vi.hoisted(() => ({ unreadable: false }));
+vi.mock("../process/getCommandLine.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../process/getCommandLine.js")>();
+  return { getCommandLine: (pid: number) => (commandLine.unreadable ? undefined : original.getCommandLine(pid)) };
+});
+
 const STALE = JSON.stringify({ pid: 999_999, startedAt: "x", token: "stale" });
 
 async function lockFiles(projectDir: string): Promise<string[]> {
@@ -267,4 +274,41 @@ describe("FsArtifactStore: who really holds a lock", () => {
     expect(kept.holder).toBeDefined();
     expect(await lockFiles(projectDir)).toEqual(["lock.1"]);
   }, 30_000);
+
+  /**
+   * Audit, third round: on Windows the OS often won't show another process's
+   * command line, and such a holder counts as held. That must never be a
+   * permanent lockout - the refusal has to say why, and name the way out.
+   */
+  describe("when the holder's command line can't be read", () => {
+    beforeEach(() => {
+      commandLine.unreadable = true;
+    });
+    afterEach(() => {
+      commandLine.unreadable = false;
+    });
+
+    it("refuses, says it couldn't confirm the holder, and names twin clean --unlock", async () => {
+      const pid = liveProcess("some-other-program");
+      await writeLock({ pid, command: "/opt/twin/dist/cli/index.js" });
+      const err = await new FsArtifactStore(projectDir).acquireLock().then(
+        () => undefined,
+        (e: unknown) => e as TwinError
+      );
+      expect(err?.code).toBe("E_LOCKED");
+      expect(err?.message).toContain("can't confirm it is a Twin run");
+      expect(err?.hint).toContain("twin clean --unlock");
+    }, 30_000);
+
+    it("leaves the lock to a plain clean, and --unlock removes it so the next run gets in", async () => {
+      await writeLock({ pid: liveProcess("some-other-program"), command: "/opt/twin/dist/cli/index.js" });
+
+      const plain = await new FsArtifactStore(projectDir).clearStaleLock();
+      expect(plain).toMatchObject({ cleared: false, holder: { confirmed: false } });
+
+      expect(await new FsArtifactStore(projectDir).clearStaleLock({ force: true })).toEqual({ cleared: true });
+      expect(await lockFiles(projectDir)).toEqual([]);
+      await (await new FsArtifactStore(projectDir).acquireLock()).release();
+    }, 30_000);
+  });
 });

@@ -64,8 +64,9 @@ program
   .command("clean")
   .description("Kill any orphaned instance processes, and remove the temp workspaces, left behind by a past run")
   .option("--project <dir>", "project directory to clean", process.cwd())
-  .action(async (opts: { project: string }) => {
-    await cleanOrphans(opts.project, logger);
+  .option("--unlock", "also remove the project's lock even if its holder can't be ruled out - only when no Twin run is in progress", false)
+  .action(async (opts: { project: string; unlock: boolean }) => {
+    await cleanOrphans(opts.project, logger, undefined, { unlock: opts.unlock });
     process.exitCode = 0;
   });
 

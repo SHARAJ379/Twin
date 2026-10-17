@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -54,6 +55,27 @@ describe("cleanOrphans", () => {
 
     expect(result.workspacesRemoved).toEqual([]);
     expect(result.workspacesKept).toEqual([dir]);
+  });
+
+  // The way out the E_LOCKED hint names: a lock whose live holder can't be
+  // ruled out survives a plain clean, and --unlock removes it.
+  it("removes a lock held by a live process only with --unlock", async () => {
+    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+    try {
+      await mkdir(path.join(projectDir, ".twin"), { recursive: true });
+      const lock = { pid: holder.pid, startedAt: "x", token: "theirs" }; // no command recorded: unconfirmable
+      await writeFile(path.join(projectDir, ".twin", "lock.1"), JSON.stringify(lock), "utf8");
+      const locks = async (): Promise<string[]> =>
+        (await readdir(path.join(projectDir, ".twin"))).filter((name) => name.startsWith("lock"));
+
+      await cleanOrphans(projectDir, logger, tmpDir);
+      expect(await locks()).toEqual(["lock.1"]);
+
+      await cleanOrphans(projectDir, logger, tmpDir, { unlock: true });
+      expect(await locks()).toEqual([]);
+    } finally {
+      holder.kill();
+    }
   });
 
   it("is a no-op with nothing to report on a clean machine", async () => {

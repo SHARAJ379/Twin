@@ -49,7 +49,9 @@ export async function cleanOrphans(
   projectDir: string,
   logger: Logger,
   /** Overridable so tests can sweep a directory of their own instead of the machine's real one. */
-  tmpDir: string = os.tmpdir()
+  tmpDir: string = os.tmpdir(),
+  /** `unlock`: remove the project's lock whoever holds it (`twin clean --unlock`). */
+  options: { unlock?: boolean } = {}
 ): Promise<CleanResult> {
   const reaped = await reapRecordedProcesses(projectDir, logger);
   if (reaped === undefined) logger.info("no run history for this project (no .twin/runs directory)");
@@ -57,12 +59,22 @@ export async function cleanOrphans(
   // The lock's own error points here, so this has to be able to clear it: a
   // run that was killed leaves its lock behind, and "nothing to clean up"
   // with the lock still in place left deleting it by hand as the only way out.
-  const lock = await new FsArtifactStore(projectDir).clearStaleLock();
-  if (lock.cleared) logger.info("removed a lock left behind by a run that is no longer running");
+  const lock = await new FsArtifactStore(projectDir).clearStaleLock({ force: options.unlock === true });
+  if (lock.cleared) {
+    logger.info(
+      options.unlock === true ? "removed the project's lock" : "removed a lock left behind by a run that is no longer running"
+    );
+  }
   if (lock.holder !== undefined) {
-    logger.warn(`a Twin run (pid ${lock.holder.pid}) is still in progress and holds the lock; leaving it`, {
-      startedAt: lock.holder.startedAt
-    });
+    logger.warn(
+      lock.holder.confirmed
+        ? `a Twin run (pid ${lock.holder.pid}) is still in progress and holds the lock; leaving it`
+        : `pid ${lock.holder.pid} holds the lock and is still running, but Twin can't confirm it is a Twin run; leaving it`,
+      {
+        startedAt: lock.holder.startedAt,
+        hint: "if you're sure no Twin run is in progress here, `twin clean --unlock` removes the lock"
+      }
+    );
   }
 
   // Processes first: a workspace can't be removed on Windows while an instance

@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- A lock whose holder can't be identified is never a permanent lockout. When the holder's pid is
+  alive but the OS won't show its command line (common on Windows), `E_LOCKED` says Twin couldn't
+  confirm it's a Twin run and names `twin clean --unlock`, a new flag that removes the lock
+  whatever holds it.
 - A boolean that legitimately differs per instance no longer fails a correct app. "True turned
   false" counts as lost data only for flags that report the scenario's own state
   (`authenticated`, `isLoggedIn`, `hasSession`, `valid`, `ok`, `success`, `exists`, `found`,

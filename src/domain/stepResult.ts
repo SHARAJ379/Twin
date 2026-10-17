@@ -1,4 +1,5 @@
 import type { InstanceId } from "./instance.js";
+import type { StepFingerprint } from "./responseFingerprint.js";
 
 /** Headers/body already passed through redaction (domain/redaction.ts) - safe to log, report, or paste publicly. */
 export interface RedactedRequest {
@@ -32,4 +33,6 @@ export interface StepResult {
   failedExpectations: string[];
   /** Variables captured by this step's `save:`, after templating. */
   saved?: Record<string, string> | undefined;
+  /** The full request and response, reduced to what comparing two runs needs - see StepFingerprint. */
+  fingerprint?: StepFingerprint | undefined;
 }

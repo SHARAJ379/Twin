@@ -109,7 +109,7 @@ export function evaluateControlGated(
 
   // The scenario's own expect: is a floor, not the whole test: a response
   // that passes it can still have lost what the single instance returned.
-  const lost = input.assertion.expectationsPassed ? describeLostData(input.control.response, input.assertion.response) : undefined;
+  const lost = input.assertion.expectationsPassed ? describeLostData(input.control, input.assertion, input.history) : undefined;
   if (lost !== undefined) {
     return {
       checkId,

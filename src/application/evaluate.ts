@@ -1,6 +1,7 @@
 import type { Check, Finding } from "../domain/check.js";
 import type { DeploymentProfile } from "../domain/deploymentProfile.js";
 import { resolveRelatedSteps, restartedSinceRelated } from "../domain/relatedSteps.js";
+import type { RunHistory } from "../domain/responseDivergence.js";
 import type { Scenario } from "../domain/scenario.js";
 import type { StepResult } from "../domain/stepResult.js";
 import type { WorkspaceDiff } from "../domain/workspaceDiff.js";
@@ -61,6 +62,15 @@ function scenarioIntegrityFinding(input: EvaluateInput): Finding | undefined {
   };
 }
 
+/** Each run's results for the steps before `index` - the control run has no restart steps, so match by id. */
+function historyBefore(input: EvaluateInput, index: number): RunHistory {
+  const earlier = new Set(input.scenario.steps.slice(0, index).map((step) => step.id));
+  return {
+    control: input.controlResults.filter((r) => earlier.has(r.stepId)),
+    split: input.splitResults.filter((r) => earlier.has(r.stepId))
+  };
+}
+
 /** Turns every tagged (`check:`) step's split-run result, paired with its control-run counterpart, into a Finding. */
 export function evaluate(input: EvaluateInput): Finding[] {
   const findings: Finding[] = [];
@@ -96,6 +106,7 @@ export function evaluate(input: EvaluateInput): Finding[] {
         assertion,
         related: resolveRelatedSteps(input.scenario, index, input.splitResults),
         restartedBetween: restartedSinceRelated(input.scenario, index, input.splitResults),
+        history: historyBefore(input, index),
         control: controlById.get(step.id),
         workspaceDiffs: input.workspaceDiffs,
         profile: input.profile

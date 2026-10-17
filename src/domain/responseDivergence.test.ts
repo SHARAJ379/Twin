@@ -1,42 +1,96 @@
 import { describe, expect, it } from "vitest";
 
-import { describeLostData } from "./responseDivergence.js";
-import type { RedactedResponse } from "./stepResult.js";
+import { describeLostData, type RunHistory } from "./responseDivergence.js";
+import { fingerprintStep } from "./responseFingerprint.js";
+import type { StepResult } from "./stepResult.js";
 
-const res = (status: number, body?: string): RedactedResponse => ({ status, headers: {}, bodyPreview: body });
+/** Identity "hash": the logic under test is what's compared, not the hashing. */
+const hash = (value: string): string => `h(${value})`;
+
+function step(status: number, body: string, request: { path: string; body?: string } = { path: "/" }): StepResult {
+  return {
+    stepId: "s",
+    startedAt: 0,
+    durationMs: 1,
+    expectationsPassed: true,
+    failedExpectations: [],
+    request: { method: "GET", path: request.path, headers: {}, bodyPreview: request.body },
+    response: { status, headers: {}, bodyPreview: body.length > 2048 ? `${body.slice(0, 2048)}<truncated>` : body },
+    fingerprint: fingerprintStep(request, body, hash)
+  };
+}
+
+/** Both runs signed up as alice first, so "alice" is data the scenario established. */
+const signedUpAsAlice: RunHistory = {
+  control: [step(201, '{"ok":true}', { path: "/signup", body: '{"name":"alice"}' })],
+  split: [step(201, '{"ok":true}', { path: "/signup", body: '{"name":"alice"}' })]
+};
 
 describe("describeLostData", () => {
-  /** The audited case: logged out answers 200 with a null user, and expect: only asked for 200. */
+  /** The original audited case: logged out answers 200 with a null user, and expect: only asked for 200. */
   it("reports a field the single instance returned and the split run nulled", () => {
-    const lost = describeLostData(res(200, '{"user":"alice"}'), res(200, '{"user":null}'));
-    expect(lost).toBe('$.user was "alice" on a single instance, but null across instances');
+    expect(describeLostData(step(200, '{"user":"alice"}'), step(200, '{"user":null}'))).toBe(
+      '$.user was "alice" on a single instance, but null across instances'
+    );
   });
 
-  it("reports missing, empty-string, empty-array and empty-object fields, nested", () => {
-    expect(describeLostData(res(200, '{"a":{"b":1}}'), res(200, '{"a":{}}'))).toContain("$.a was");
-    expect(describeLostData(res(200, '{"items":[1]}'), res(200, '{"items":[]}'))).toContain("$.items");
-    expect(describeLostData(res(200, '{"name":"x","id":"1"}'), res(200, '{"id":"2"}'))).toContain("$.name");
-    expect(describeLostData(res(200, '{"name":"x"}'), res(200, '{"name":""}'))).toContain("$.name");
+  it("reports missing, empty-string, empty-array, empty-object and nulled-parent fields", () => {
+    expect(describeLostData(step(200, '{"a":{"b":1}}'), step(200, '{"a":{}}'))).toContain("$.a was");
+    expect(describeLostData(step(200, '{"items":[1]}'), step(200, '{"items":[]}'))).toContain("$.items");
+    expect(describeLostData(step(200, '{"name":"x","id":"1"}'), step(200, '{"id":"2"}'))).toContain("$.name");
+    expect(describeLostData(step(200, '{"name":"x"}'), step(200, '{"name":""}'))).toContain("$.name");
+    expect(describeLostData(step(200, '{"user":{"name":"x","id":1}}'), step(200, '{"user":null}'))).toBe(
+      '$.user was {"name":"x","id":1} on a single instance, but null across instances'
+    );
   });
 
-  it("reports a different status, and an empty body where there was one", () => {
-    expect(describeLostData(res(200, "{}"), res(204))).toContain("status 204");
-    expect(describeLostData(res(200, "hello"), res(200, ""))).toContain("empty");
+  it("reports a different status, and an emptied body", () => {
+    expect(describeLostData(step(200, "{}"), step(204, ""))).toContain("status 204");
+    expect(describeLostData(step(200, "hello"), step(200, ""))).toContain("empty");
   });
 
-  it("ignores values that merely differ - ids, timestamps, emails differ between any two runs", () => {
-    expect(describeLostData(res(201, '{"id":"1","at":"t1","email":"a-1@x"}'), res(201, '{"id":"9","at":"t2","email":"a-2@x"}'))).toBeUndefined();
-    expect(describeLostData(res(200, '{"count":3,"ok":true}'), res(200, '{"count":0,"ok":false}'))).toBeUndefined();
-    expect(describeLostData(res(200, '{"items":[1,2,3]}'), res(200, '{"items":[4]}'))).toBeUndefined();
+  /** Audit, second round: a logged-out flag is a boolean, and booleans were never compared. */
+  it("reports true turning false - {authenticated: false}", () => {
+    expect(describeLostData(step(200, '{"authenticated":true}'), step(200, '{"authenticated":false}'))).toBe(
+      "$.authenticated was true on a single instance, but false across instances"
+    );
+    // ...but not the other way round, which loses nothing
+    expect(describeLostData(step(200, '{"cached":false}'), step(200, '{"cached":true}'))).toBeUndefined();
   });
 
-  it("never compares a truncated or non-JSON body field by field", () => {
-    expect(describeLostData(res(200, '{"user":"alice","x":"<truncated>'), res(200, '{"user":null}'))).toBeUndefined();
-    expect(describeLostData(res(200, "<html>alice</html>"), res(200, "<html></html>"))).toBeUndefined();
+  /** Audit, second round: a fallback user isn't null, empty or missing - it's a different value. */
+  it("reports a fallback replacing data the scenario established - {user: guest}", () => {
+    expect(describeLostData(step(200, '{"user":"alice"}'), step(200, '{"user":"guest"}'), signedUpAsAlice)).toBe(
+      '$.user was "alice" on a single instance, but "guest" - a value this run never sent or received across instances'
+    );
+  });
+
+  it("ignores values that merely differ - generated ids, timestamps and unique emails", () => {
+    const history: RunHistory = {
+      control: [step(201, '{"id":"1"}', { path: "/signup", body: '{"email":"a-1@x"}' })],
+      split: [step(201, '{"id":"9"}', { path: "/signup", body: '{"email":"a-2@x"}' })]
+    };
+    expect(
+      describeLostData(
+        step(200, '{"id":"1","email":"a-1@x","at":"t1"}', { path: "/items/1" }),
+        step(200, '{"id":"9","email":"a-2@x","at":"t2"}', { path: "/items/9" }),
+        history
+      )
+    ).toBeUndefined();
+    expect(describeLostData(step(200, '{"count":3}'), step(200, '{"count":0}'))).toBeUndefined();
+    expect(describeLostData(step(200, '{"items":[1,2,3]}'), step(200, '{"items":[4]}'))).toBeUndefined();
+  });
+
+  /** Audit, second round: previews are cut at 2KB, and a cut preview was never compared. */
+  it("compares a response over 2KB in full", () => {
+    const padding = "x".repeat(5000);
+    expect(describeLostData(step(200, `{"user":"alice","pad":"${padding}"}`), step(200, `{"user":null,"pad":"${padding}"}`))).toBe(
+      "$.user was a value on a single instance, but null across instances"
+    );
   });
 
   it("never quotes a secret the control run returned", () => {
-    const lost = describeLostData(res(200, '{"token":"abc"}'), res(200, '{"token":null}'));
+    const lost = describeLostData(step(200, '{"token":"abc"}'), step(200, '{"token":null}'));
     expect(lost).not.toContain("abc");
   });
 });

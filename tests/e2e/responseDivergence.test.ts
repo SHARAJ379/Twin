@@ -10,8 +10,10 @@ import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
 const logger = new ConsoleLogger({ level: "error" });
 
 /**
- * Sessions in a module-level Map, and a logged-out /me that answers
- * 200 {"user": null} rather than 401 - a very common pattern.
+ * Sessions in a module-level Map, and a logged-out /me that answers 200
+ * rather than 401 - a very common pattern, in the shapes ME_SHAPE picks:
+ * {"user": null}, {"authenticated": false}, a fallback {"user": "guest"}, or
+ * {"user": null} in a body well over the 2KB the report keeps.
  */
 const NULL_USER_APP = `
 const http = require("node:http");
@@ -21,13 +23,22 @@ http.createServer((req, res) => {
   const send = (status, body, headers = {}) => { res.writeHead(status, { "content-type": "application/json", ...headers }); res.end(JSON.stringify(body)); };
   if (req.url === "/health") return send(200, { ok: true });
   if (req.method === "POST" && req.url === "/login") {
-    const sid = crypto.randomUUID();
-    sessions.set(sid, "alice");
-    return send(200, { ok: true }, { "set-cookie": "sid=" + sid + "; Path=/; HttpOnly" });
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      const sid = crypto.randomUUID();
+      sessions.set(sid, JSON.parse(raw).name);
+      send(200, { ok: true }, { "set-cookie": "sid=" + sid + "; Path=/; HttpOnly" });
+    });
+    return;
   }
   if (req.url === "/me") {
-    const sid = (req.headers.cookie || "").split("sid=")[1];
-    return send(200, { user: sessions.get(sid) ?? null });
+    const user = sessions.get((req.headers.cookie || "").split("sid=")[1]);
+    const shape = process.env.ME_SHAPE;
+    if (shape === "authenticated") return send(200, { authenticated: user !== undefined });
+    if (shape === "guest") return send(200, { user: user ?? "guest" });
+    if (shape === "big") return send(200, { user: user ?? null, preferences: "x".repeat(5000) });
+    return send(200, { user: user ?? null });
   }
   send(404, {});
 }).listen(Number(process.env.PORT), "127.0.0.1");
@@ -39,7 +50,7 @@ version: 1
 steps:
   - id: login
     kind: request
-    request: { method: POST, path: /login }
+    request: { method: POST, path: /login, json: { name: alice } }
     expect: { status: 200 }
   - id: me-check
     kind: request
@@ -61,7 +72,12 @@ describe("a split response that passes expect: but lost data", () => {
     await rm(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  it("fails the check rather than calling the app safe", async () => {
+  it.each([
+    ["null", "$.user"],
+    ["authenticated", "$.authenticated"],
+    ["guest", "$.user"],
+    ["big", "$.user"]
+  ])("fails the check rather than calling the app safe (/me shape: %s)", async (shape, field) => {
     projectDir = await mkdtemp(path.join(os.tmpdir(), "divergence-fixture-"));
     await writeFile(path.join(projectDir, "package.json"), JSON.stringify({ name: "divergence-fixture", private: true }), "utf8");
     await writeFile(path.join(projectDir, "server.js"), NULL_USER_APP, "utf8");
@@ -71,7 +87,7 @@ describe("a split response that passes expect: but lost data", () => {
       {
         projectDir,
         scenarioPath: path.join(projectDir, "scenario.yaml"),
-        env: {},
+        env: { ME_SHAPE: shape },
         start: "node server.js",
         healthPath: "/health",
         portEnv: "PORT",
@@ -89,7 +105,7 @@ describe("a split response that passes expect: but lost data", () => {
     };
     const finding = report.findings.find((f) => f.checkId === "session-survives-switch")!;
     expect(finding.status).toBe("fail");
-    expect(finding.summary).toContain("$.user");
+    expect(finding.summary).toContain(field);
     expect(exitCode).toBe(1);
   }, 90_000);
 });

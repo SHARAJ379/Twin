@@ -1,4 +1,5 @@
 import type { InstanceId } from "./instance.js";
+import type { RunHistory } from "./responseDivergence.js";
 import type { CheckId } from "./scenario.js";
 import type { StepResult } from "./stepResult.js";
 import type { Suspect } from "./suspect.js";
@@ -46,6 +47,8 @@ export interface CheckInput {
    * really landed on a restarted instance.
    */
   restartedBetween?: InstanceId[];
+  /** Each run's steps before this assertion - what the scenario had established by then. */
+  history?: RunHistory;
   /** The same step's result from the control run - a Finding can only be "fail" if this passed (I7). */
   control?: StepResult | undefined;
   workspaceDiffs: WorkspaceDiff[];

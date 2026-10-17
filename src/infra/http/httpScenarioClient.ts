@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { evaluateExpectation } from "../../domain/expectation.js";
 import { redactBody, redactHeaders, redactUrl } from "../../domain/redaction.js";
 import { defaultRouteForCheck } from "../../domain/relatedSteps.js";
+import { fingerprintStep } from "../../domain/responseFingerprint.js";
 import { evaluateSaveExpression } from "../../domain/saveExpression.js";
 import type { RequestStep, RestartStep, Scenario, Step, WaitStep } from "../../domain/scenario.js";
 import type { RedactedRequest, RedactedResponse, StepResult } from "../../domain/stepResult.js";
@@ -17,6 +18,15 @@ import type { RunContext, ScenarioClient } from "../../ports/scenarioClient.js";
  * text/event-stream) hung `twin run` until CI's own job timeout killed it.
  */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * One salt per Twin process: fingerprints from the control and split runs
+ * compare with each other, and with nothing outside this run. Without it, a
+ * hashed short password in results.json is a dictionary lookup away.
+ */
+const FINGERPRINT_SALT = randomBytes(16);
+const fingerprintHash = (value: string): string =>
+  createHash("sha256").update(FINGERPRINT_SALT).update(value).digest("hex").slice(0, 16);
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -211,6 +221,8 @@ export class HttpScenarioClient implements ScenarioClient {
     // at the step, with the variable name in the message").
     const timeoutMs = ctx.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     let redactedRequest: RedactedRequest | undefined;
+    let renderedPath: string;
+    let sentBody: string | undefined;
     let response: Response;
     let responseText: string;
     try {
@@ -239,6 +251,8 @@ export class HttpScenarioClient implements ScenarioClient {
 
       const { body, contentType } = buildBody(rendered);
       if (contentType !== undefined) headers["content-type"] ??= contentType;
+      renderedPath = rendered.path;
+      sentBody = typeof body === "string" ? body : undefined;
 
       redactedRequest = {
         method: rendered.method,
@@ -315,7 +329,8 @@ export class HttpScenarioClient implements ScenarioClient {
       response: redactedResponse,
       expectationsPassed: expectationResult.failures.length === 0,
       failedExpectations: expectationResult.failures,
-      ...(Object.keys(saved).length > 0 ? { saved } : {})
+      ...(Object.keys(saved).length > 0 ? { saved } : {}),
+      fingerprint: fingerprintStep({ path: renderedPath, body: sentBody }, responseText, fingerprintHash)
     };
   }
 }

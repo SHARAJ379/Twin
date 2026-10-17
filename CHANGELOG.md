@@ -9,6 +9,14 @@ shift between minor versions.
 
 ### Fixed
 
+- The response check compares full responses, and catches the shapes it missed. It compared the
+  2KB previews the report keeps, and a truncated preview was skipped, so `{"user": null, ...}`
+  passed whenever the body was large. It never compared booleans, so `{"authenticated": false}`
+  passed. And it only noticed null, empty or missing values, so a fallback `{"user": "guest"}`
+  passed. Each step now records a fingerprint of the whole response - field kinds and salted
+  hashes, never values - and a string counts as replaced when the control run's value was data
+  the scenario established (sent, or received earlier) and the split run's is something that run
+  never saw; generated ids and timestamps are never held to that.
 - Docker Compose projects aren't refused. A dotless host is a compose service whether it's bare
   (`DB_HOST=db`) or in a URL (`postgres://u@db:5432`); the URL form was refused, which refused
   every Compose project once `docker-compose.yml` was scanned. RFC 2606 names (`example.com`,

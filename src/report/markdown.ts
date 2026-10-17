@@ -1,23 +1,10 @@
 import type { Finding } from "../domain/check.js";
 import type { DeploymentProfile } from "../domain/deploymentProfile.js";
-import { totalChecks, verdictHeadline, type Verdict } from "../domain/verdict.js";
+import type { Verdict } from "../domain/verdict.js";
 import { buildFixPrompt } from "./fixPrompt.js";
+import { getsFixPrompt, verdictSentence } from "./verdictSummary.js";
 
 const HEADING: Record<Finding["status"], string> = { pass: "PASS", fail: "FAIL", error: "ERROR", skipped: "SKIPPED" };
-
-function verdictSummary(verdict: Verdict): string {
-  const total = totalChecks(verdict);
-  switch (verdictHeadline(verdict)) {
-    case "safe":
-      return `**${verdict.passed} of ${total} checks passed** - this app looks safe to run on more than one instance.`;
-    case "unsafe":
-      return `**${verdict.failed + verdict.errored} of ${total} checks failed or errored** - this app is NOT safe to run on more than one instance.`;
-    case "inconclusive":
-      return total === 0
-        ? "**No checks ran** - nothing in this scenario is tagged with `check:`, so Twin can't tell you anything about this app yet."
-        : `**Twin could not tell** - ${verdict.passed} of ${total} checks passed, ${verdict.errored} errored, ${verdict.skipped} skipped.`;
-  }
-}
 
 /** The human/Claude-friendly report (§7.8): includes a ready-to-paste fix prompt per failed check. */
 export function renderMarkdownReport(
@@ -31,12 +18,21 @@ export function renderMarkdownReport(
     "",
     `Profile: \`${profile}\``,
     "",
-    verdictSummary(verdict),
+    `**${verdictSentence(verdict, findings)}**`,
     ""
   ];
 
   for (const finding of findings) {
-    lines.push(`## ${HEADING[finding.status]} — ${finding.checkId}`, "", finding.summary, "");
+    const blocked = finding.status === "fail" && finding.blockedBy !== undefined;
+    const prompt = getsFixPrompt(finding, findings);
+    lines.push(`## ${blocked ? "BLOCKED" : HEADING[finding.status]} — ${finding.checkId}`, "", finding.summary, "");
+    if (blocked && !prompt) {
+      lines.push(
+        "_Blocked: rejected (401/403) on another instance, so this check never reached what it tests. The session bug above is the cause, not a separate one._",
+        ""
+      );
+      continue;
+    }
 
     if (finding.status === "error" || finding.status === "skipped") {
       lines.push(`_Reason: ${finding.reason}_`, "");
@@ -44,7 +40,7 @@ export function renderMarkdownReport(
     for (const suspect of finding.suspects) {
       lines.push(`**Likely cause:** \`${suspect.file}:${suspect.line}\` - ${suspect.snippet} (${suspect.confidence} confidence)`, "");
     }
-    if (finding.status === "fail") {
+    if (prompt) {
       lines.push("**Fix prompt (paste into Claude Code):**", "", "```", buildFixPrompt(finding, profile), "```", "");
     }
   }

@@ -61,4 +61,24 @@ describe("renderTerminalReport", () => {
     const unsafe = renderTerminalReport([failFinding], computeVerdict([failFinding]), "ephemeral");
     expect(unsafe).toContain("NOT safe to run on more than one instance");
   });
+
+  it("counts a session bug once, and shows the checks it 401'd as blocked with no prompt of their own", () => {
+    const session: Finding = { ...failFinding, checkId: "session-survives-switch", title: "Session survives instance switch" };
+    const blocked: Finding = { ...failFinding, blockedBy: "auth" };
+    const findings = [session, blocked];
+    const out = renderTerminalReport(findings, computeVerdict(findings), "ephemeral");
+    expect(out).toContain(
+      "1 bug found (session-survives-switch); 1 check couldn't be tested because of it (data-consistency) - this app is NOT safe"
+    );
+    expect(out.match(/Fix prompt/g)).toHaveLength(1);
+    expect(out).toContain("BLOCKED data-consistency");
+  });
+
+  it("still gives one fix prompt when every failure is blocked - the 401 is the bug", () => {
+    const blocked: Finding = { ...failFinding, blockedBy: "auth" };
+    const other: Finding = { ...failFinding, checkId: "file-consistency", blockedBy: "auth" };
+    const out = renderTerminalReport([blocked, other], computeVerdict([blocked, other]), "ephemeral");
+    expect(out.match(/Fix prompt/g)).toHaveLength(1);
+    expect(out).toContain("1 bug found (authenticated requests were rejected on another instance)");
+  });
 });

@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { runCommand, type RunOptions } from "../../src/cli/commands/run.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
@@ -43,6 +43,10 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
   it("FAILs all four checks against examples/broken-express, with the tracer attaching real suspects", async () => {
     const twinDir = path.join(brokenExpressDir, ".twin");
     twinDirsToClean.push(twinDir);
+    const printed: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      printed.push(args.join(" "));
+    });
     const exitCode = await runCommand(
       {
         ...baseOptions,
@@ -56,12 +60,21 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
         redactHeaders: ["x-powered-by"]
       },
       logger
-    );
+    ).finally(() => log.mockRestore());
     expect(exitCode).toBe(1);
+
+    // One session bug, not four (README "Built-in checks"): the three checks
+    // it 401s are shown as blocked, with no fix prompt of their own.
+    const terminal = printed.join("\n");
+    expect(terminal).toContain(
+      "1 bug found (session-survives-switch); 3 checks couldn't be tested because of it (data-consistency, file-consistency, restart-persistence)"
+    );
+    expect(terminal.match(/Fix prompt/g)).toHaveLength(1);
+    expect(terminal.match(/BLOCKED/g)).toHaveLength(3);
 
     const latestId = await readFile(path.join(twinDir, "latest"), "utf8");
     const report = JSON.parse(await readFile(path.join(twinDir, "runs", latestId, "report.json"), "utf8")) as {
-      verdict: { failed: number };
+      verdict: { failed: number; blocked: number };
       findings: {
         checkId: string;
         status: string;
@@ -72,6 +85,7 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
       }[];
     };
     expect(report.verdict.failed).toBe(4);
+    expect(report.verdict.blocked).toBe(3);
     // At least the two file-backed checks (file-consistency, restart-persistence)
     // must get real tracer evidence, not just an empty suspects list.
     expect(report.findings.every((f) => f.status === "fail")).toBe(true);

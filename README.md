@@ -110,7 +110,11 @@ file was missing: the finding stays a failure (the CONTROL run proved the same r
 works on a single instance), its summary names the session as what diverged, the
 tracer points at your session store instead of your data store, and `report.json`
 carries `blockedBy: "auth"` on that finding. In practice this means a broken session
-shows up as one bug with one cause, not four unrelated-looking ones.
+shows up as one bug with one cause, not four unrelated-looking ones. The terminal
+and `report.md` show those checks as `BLOCKED`, with no fix prompt of their own, and
+the summary counts bugs rather than failed checks: "1 bug found
+(session-survives-switch); 3 checks couldn't be tested because of it". Exit code is
+still `1`. `report.json`'s `verdict.blocked` says how many of `verdict.failed` were blocked.
 
 ### Retrying a step that needs a moment (`retries` / `settleMs`)
 

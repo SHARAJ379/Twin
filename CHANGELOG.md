@@ -9,6 +9,11 @@ shift between minor versions.
 
 ### Fixed
 
+- One session bug is reported as one bug. On `examples/broken-express` the summary said "4 of 4
+  checks failed" and printed four fix prompts, though three of those checks were only 401'd by
+  the session bug. Checks with `blockedBy: "auth"` are now shown as `BLOCKED` with no fix prompt
+  of their own, and the summary reads "1 bug found (session-survives-switch); 3 checks couldn't
+  be tested because of it". Exit code is still 1; `report.json` adds `verdict.blocked`.
 - The source scan reads config files named after an environment (`config/database.test.yml`,
   `settings.spec.json`): only test *code* is skipped by name, as are the test, tests, spec,
   `__tests__`, e2e and fixtures directories.

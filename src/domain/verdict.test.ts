@@ -11,7 +11,7 @@ function finding(status: Finding["status"]): Finding {
 describe("computeVerdict", () => {
   it("is safe when everything passes", () => {
     const verdict = computeVerdict([finding("pass"), finding("pass")]);
-    expect(verdict).toEqual({ passed: 2, failed: 0, errored: 0, skipped: 0, safeForMultiInstance: true });
+    expect(verdict).toEqual({ passed: 2, failed: 0, blocked: 0, errored: 0, skipped: 0, safeForMultiInstance: true });
   });
 
   it("is safe when some checks are skipped but nothing failed or errored", () => {
@@ -33,7 +33,17 @@ describe("computeVerdict", () => {
 
   it("counts every status correctly across a mixed set", () => {
     const verdict = computeVerdict([finding("pass"), finding("pass"), finding("fail"), finding("error"), finding("skipped")]);
-    expect(verdict).toEqual({ passed: 2, failed: 1, errored: 1, skipped: 1, safeForMultiInstance: false });
+    expect(verdict).toEqual({ passed: 2, failed: 1, blocked: 0, errored: 1, skipped: 1, safeForMultiInstance: false });
+  });
+
+  // One session bug rejects every authenticated check after it with a 401;
+  // those still fail (exit 1), but are counted as blocked, not as more bugs.
+  it("counts auth-blocked failures as blocked, and still unsafe", () => {
+    const blocked = { ...finding("fail"), blockedBy: "auth" as const } as Finding;
+    const verdict = computeVerdict([finding("fail"), blocked, blocked]);
+    expect(verdict).toMatchObject({ failed: 3, blocked: 2 });
+    expect(verdictHeadline(verdict)).toBe("unsafe");
+    expect(verdictHeadline(computeVerdict([blocked]))).toBe("unsafe");
   });
 
   // Regression: a scenario with nothing tagged `check:` used to report

@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- On Windows, a slow first process lookup no longer makes a lock's holder "unknown". PowerShell's
+  first CIM query on a machine can take over ten seconds; it timed out, and a stale lock whose
+  pid had been reused was refused as unconfirmable. A timed-out lookup is now asked once more
+  with 30 seconds to answer.
 - Fix prompts read as sentences and copy cleanly. The summary ran into the next sentence with no
   full stop ("...(status 401) Fix the underlying issue..."), and the terminal wrapped the prompt
   in quotes although it contains its own; it's now an indented block.

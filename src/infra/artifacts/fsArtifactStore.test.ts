@@ -256,12 +256,12 @@ describe("FsArtifactStore: who really holds a lock", () => {
   it("reclaims a lock whose pid is alive but has been reused by something else", async () => {
     await writeLock({ pid: liveProcess("unrelated-program"), command: "/opt/twin/dist/cli/index.js" });
     await (await new FsArtifactStore(projectDir).acquireLock()).release();
-  }, 30_000);
+  }, 60_000); // a cold Windows CIM query can take 10s+, and is retried once
 
   it("still refuses a lock whose live pid looks like the run that wrote it", async () => {
     await writeLock({ pid: liveProcess("twin-cli-marker.js"), command: "twin-cli-marker.js" });
     await expect(new FsArtifactStore(projectDir).acquireLock()).rejects.toMatchObject({ code: "E_LOCKED" });
-  }, 30_000);
+  }, 60_000); // a cold Windows CIM query can take 10s+, and is retried once
 
   it("lets twin clean clear a dead run's lock, and leaves a live one alone", async () => {
     await writeLock({ pid: 999_999 });
@@ -273,7 +273,7 @@ describe("FsArtifactStore: who really holds a lock", () => {
     expect(kept.cleared).toBe(false);
     expect(kept.holder).toBeDefined();
     expect(await lockFiles(projectDir)).toEqual(["lock.1"]);
-  }, 30_000);
+  }, 60_000); // a cold Windows CIM query can take 10s+, and is retried once
 
   /**
    * Audit, third round: on Windows the OS often won't show another process's
@@ -298,7 +298,7 @@ describe("FsArtifactStore: who really holds a lock", () => {
       expect(err?.code).toBe("E_LOCKED");
       expect(err?.message).toContain("can't confirm it is a Twin run");
       expect(err?.hint).toContain("twin clean --unlock");
-    }, 30_000);
+    }, 60_000); // a cold Windows CIM query can take 10s+, and is retried once
 
     it("leaves the lock to a plain clean, and --unlock removes it so the next run gets in", async () => {
       await writeLock({ pid: liveProcess("some-other-program"), command: "/opt/twin/dist/cli/index.js" });
@@ -309,6 +309,6 @@ describe("FsArtifactStore: who really holds a lock", () => {
       expect(await new FsArtifactStore(projectDir).clearStaleLock({ force: true })).toEqual({ cleared: true });
       expect(await lockFiles(projectDir)).toEqual([]);
       await (await new FsArtifactStore(projectDir).acquireLock()).release();
-    }, 30_000);
+    }, 60_000); // a cold Windows CIM query can take 10s+, and is retried once
   });
 });

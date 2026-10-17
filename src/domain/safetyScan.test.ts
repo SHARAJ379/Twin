@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { scanForRemoteResources, scanForThirdPartyKeys } from "./safetyScan.js";
+import { scanForRemoteResources, scanForThirdPartyKeys, scanSourceForRemoteResources } from "./safetyScan.js";
 
 describe("scanForRemoteResources", () => {
   it("flags a DATABASE_URL pointing at a real host", () => {
@@ -158,5 +158,91 @@ describe("scanForThirdPartyKeys", () => {
 
   it("ignores unrelated keys", () => {
     expect(scanForThirdPartyKeys({ NODE_ENV: "production" })).toEqual([]);
+  });
+});
+
+/**
+ * Found by an external audit feeding the scan real-world names. It started
+ * from the variable's name, so every one of these walked past it and Twin
+ * would have written test data or uploads into the real service.
+ */
+describe("scanForRemoteResources: real-world names the name-based rule missed", () => {
+  it("flags a datastore URL by its scheme, whatever the variable is called", () => {
+    const found = scanForRemoteResources({
+      ATLAS_URI: "mongodb+srv://u:p@cluster0.abcde.mongodb.net/app",
+      SOMETHING_ELSE: "rediss://default:x@eu1-fancy.upstash.io:6379"
+    });
+    expect(found.map((r) => r.host).sort()).toEqual(["cluster0.abcde.mongodb.net", "eu1-fancy.upstash.io"]);
+  });
+
+  it.each([
+    ["KV_URL", "redis://default:x@eu1-kv.upstash.io:6379", "eu1-kv.upstash.io"],
+    ["KV_REST_API_URL", "https://eu1-kv.upstash.io", "eu1-kv.upstash.io"],
+    ["CONVEX_URL", "https://happy-otter-123.convex.cloud", "happy-otter-123.convex.cloud"],
+    ["CLOUDINARY_URL", "cloudinary://123:abc@my-cloud", "my-cloud"],
+    ["S3_BUCKET", "acme-prod-uploads", "acme-prod-uploads"],
+    ["AWS_S3_BUCKET_NAME", "acme-uploads", "acme-uploads"],
+    ["FIREBASE_PROJECT_ID", "acme-app", "acme-app"],
+    ["GOOGLE_APPLICATION_CREDENTIALS", "./service-account.json", "./service-account.json"],
+    ["DB_HOST", "prod-db", "prod-db"]
+  ])("flags %s", (key, value, host) => {
+    expect(scanForRemoteResources({ [key]: value }).map((r) => r.host)).toEqual([host]);
+  });
+
+  it("still leaves a docker-compose service name alone", () => {
+    expect(scanForRemoteResources({ DB_HOST: "postgres", REDIS_HOST: "cache" })).toEqual([]);
+  });
+
+  it("doesn't flag a bucket or Firebase project when the SDK is pointed at a local emulator or endpoint", () => {
+    expect(scanForRemoteResources({ FIREBASE_PROJECT_ID: "demo", FIRESTORE_EMULATOR_HOST: "localhost:8080" })).toEqual([]);
+    expect(scanForRemoteResources({ S3_BUCKET: "uploads", AWS_ENDPOINT_URL: "http://localhost:4566" })).toEqual([]);
+  });
+
+  it("lets a vouched-for bucket through", () => {
+    expect(scanForRemoteResources({ S3_BUCKET: "acme-staging" }, { allowedHosts: ["acme-staging"] })).toEqual([]);
+  });
+
+  it("doesn't read an ordinary https API base URL as a datastore", () => {
+    expect(scanForRemoteResources({ ANTHROPIC_BASE_URL: "https://api.anthropic.com", NEXT_PUBLIC_SITE: "https://acme.com" })).toEqual([]);
+  });
+});
+
+describe("scanSourceForRemoteResources", () => {
+  it("flags a connection string hardcoded in the source", () => {
+    const found = scanSourceForRemoteResources([
+      { path: "server.js", content: 'mongoose.connect("mongodb+srv://u:p@cluster0.abcde.mongodb.net/app");' }
+    ]);
+    expect(found).toEqual([{ key: "a connection string in the source", host: "cluster0.abcde.mongodb.net", source: "server.js" }]);
+  });
+
+  it("ignores local, templated and non-datastore URLs", () => {
+    const found = scanSourceForRemoteResources([
+      {
+        path: "db.js",
+        content: [
+          'const url = process.env.MONGO_URI || "mongodb://localhost:27017/app";',
+          "const tpl = `postgres://${user}@${host}/db`;",
+          'fetch("https://api.example.com/v1");'
+        ].join("\n")
+      }
+    ]);
+    expect(found).toEqual([]);
+  });
+});
+
+describe("scanForThirdPartyKeys: credentials, not configuration", () => {
+  it.each(["RESEND_API_KEY", "PAYPAL_CLIENT_SECRET", "BRAINTREE_PRIVATE_KEY", "MAILCHIMP_API_KEY", "SLACK_WEBHOOK_URL", "AWS_SECRET_ACCESS_KEY"])(
+    "warns about %s",
+    (key) => {
+      expect(scanForThirdPartyKeys({ [key]: "x" })).toEqual([key]);
+    }
+  );
+
+  it("doesn't warn about a client setting that sends nothing on its own", () => {
+    expect(scanForThirdPartyKeys({ ANTHROPIC_BASE_URL: "https://api.anthropic.com", STRIPE_API_VERSION: "2024-06-20" })).toEqual([]);
+  });
+
+  it("doesn't warn about a key that is declared but empty", () => {
+    expect(scanForThirdPartyKeys({ OPENAI_API_KEY: "" })).toEqual([]);
   });
 });

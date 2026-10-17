@@ -11,9 +11,14 @@ import { collectEnvCandidates, mergeEnvSources } from "../../domain/envSources.j
 import { TwinError } from "../../domain/errors.js";
 import { collectSecretEnvValues, createLogRedactor } from "../../domain/logRedaction.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
-import { scanEnvCandidatesForRemoteResources, scanForThirdPartyKeys } from "../../domain/safetyScan.js";
+import {
+  scanEnvCandidatesForRemoteResources,
+  scanForThirdPartyKeys,
+  scanSourceForRemoteResources
+} from "../../domain/safetyScan.js";
 import type { StackProfile } from "../../domain/stack.js";
 import { genericStack } from "../../domain/stacks/generic.js";
+import { stackProfiles } from "../../domain/stacks/index.js";
 import { computeVerdict } from "../../domain/verdict.js";
 import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
 import { loadTwinConfig } from "../../infra/config/loadTwinConfig.js";
@@ -21,6 +26,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS, HttpScenarioClient } from "../../infra/http
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
 import { HttpProxy } from "../../infra/proxy/httpProxy.js";
 import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
+import { loadSourceFilesForSafetyScan } from "../../infra/safety/loadSourceFiles.js";
 import { detectStack } from "../../infra/stack/detectStack.js";
 import { FsWorkspaceManager } from "../../infra/workspace/fsWorkspaceManager.js";
 import type { Logger } from "../../ports/logger.js";
@@ -148,13 +154,22 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     // Scanned per declared value rather than over mergedEnv: whichever source
     // loses the merge still holds a value the app might be the one to load, so
     // a placeholder must never be able to hide a real host declared elsewhere.
-    const remoteRefs = scanEnvCandidatesForRemoteResources(collectEnvCandidates(envSources), { allowedHosts });
+    // And the code itself: a connection string pasted into
+    // `mongoose.connect("mongodb+srv://...")` never passes through any env.
+    const sourceFiles = await loadSourceFilesForSafetyScan(
+      options.projectDir,
+      stackProfiles.flatMap((profile) => profile.sourceExtensions)
+    );
+    const remoteRefs = [
+      ...scanEnvCandidatesForRemoteResources(collectEnvCandidates(envSources), { allowedHosts }),
+      ...scanSourceForRemoteResources(sourceFiles, { allowedHosts })
+    ];
     if (remoteRefs.length > 0 && !allowRemote) {
       const list = remoteRefs.map((r) => `  ${r.key} -> ${r.host}   (set by ${r.source ?? originOf(r.key)})`).join("\n");
       const hosts = [...new Set(remoteRefs.map((r) => r.host))];
       throw new TwinError(
         "E_UNSAFE_ENV",
-        `found what looks like a non-local database/service in the environment:\n${list}`,
+        `found what looks like a non-local database/service in the environment or the code:\n${list}`,
         {
           hint: `Twin would write test users/records into this real database. Point it at a local one, vouch for ${
             hosts.length === 1 ? "this host" : "these hosts"

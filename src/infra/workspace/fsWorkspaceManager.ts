@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { cp, lstat, mkdir, open, readdir, rm, stat, symlink } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, open, readdir, rm, stat, symlink } from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
@@ -154,13 +154,48 @@ export class FsWorkspaceManager implements WorkspaceManager {
   private readonly pristineBySource = new Map<string, string>();
   private readonly recordsByPristine = new Map<string, PristineRecord>();
 
+  private rootReady: Promise<void> | undefined;
+
   constructor(private readonly root: string) {}
+
+  /**
+   * Creates the run's root as owner-only, before anything is copied into it.
+   *
+   * Every workspace is a full copy of the project, `.env` included, four
+   * times over, in a shared temp directory. Created with the default mode the
+   * root was drwxr-xr-x and the copied `.env` -rw-r--r--, so any other user
+   * on a shared machine or CI runner could read the app's secrets - for as
+   * long as `--keep-workspaces` or a crash left them there. A 0700 root
+   * closes everything under it, whatever the copied files' own modes are.
+   *
+   * Created exclusively and then checked, because /tmp is shared: a directory
+   * or symlink someone else planted at this path must be refused, not used.
+   * (Windows ignores the mode; its temp directory is per-user already.)
+   */
+  private ensureRoot(): Promise<void> {
+    this.rootReady ??= (async () => {
+      await mkdir(path.dirname(this.root), { recursive: true });
+      try {
+        await mkdir(this.root, { mode: 0o700 });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+      const info = await lstat(this.root);
+      const notOurs = typeof process.getuid === "function" && info.uid !== process.getuid();
+      if (!info.isDirectory() || notOurs) {
+        throw new Error(`refusing to use workspace root ${this.root}: it is not a directory owned by this user`);
+      }
+      if (process.platform !== "win32") await chmod(this.root, 0o700);
+    })();
+    return this.rootReady;
+  }
 
   async preparePristine(sourceDir: string, options: WorkspaceOptions): Promise<string> {
     const resolvedSource = path.resolve(sourceDir);
     const cached = this.pristineBySource.get(resolvedSource);
     if (cached) return cached;
 
+    await this.ensureRoot();
     const dest = path.join(this.root, "pristine", path.basename(resolvedSource));
     const ignore = new Set(options.ignore);
     const link = new Set(options.link);
@@ -217,6 +252,7 @@ export class FsWorkspaceManager implements WorkspaceManager {
       throw new Error(`cloneForInstance: ${pristineDir} was not created by preparePristine()`);
     }
 
+    await this.ensureRoot();
     const dest = path.join(this.root, instance);
     // Same retries as cleanup(): a just-killed instance can still hold a
     // handle inside its old workspace for a few ms on Windows.
@@ -265,5 +301,7 @@ export class FsWorkspaceManager implements WorkspaceManager {
     // cwd's directory handle for a few ms after the kill call returns, so an
     // immediate recursive rm can see a transient EBUSY/ENOTEMPTY.
     await rm(this.root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    // Gone now, so a later prepare must create it owner-only again.
+    this.rootReady = undefined;
   }
 }

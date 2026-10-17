@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, open, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -71,6 +71,28 @@ describe("FsWorkspaceManager", () => {
   afterEach(async () => {
     await rm(sourceDir, { recursive: true, force: true });
     await rm(root, { recursive: true, force: true });
+  });
+
+  /**
+   * Every workspace is a full copy of the project, .env included. Created
+   * with the default mode, the root was drwxr-xr-x and the copied .env
+   * -rw-r--r--: readable by every other user on a shared machine or runner.
+   */
+  it.skipIf(process.platform === "win32")("creates the run's root owner-only, so the copied .env isn't readable by other users", async () => {
+    await writeFile(path.join(sourceDir, ".env"), "SECRET=x");
+    const runRoot = path.join(root, "run");
+    const manager = new FsWorkspaceManager(runRoot);
+    const pristine = await manager.preparePristine(sourceDir, { link: [], ignore: [] });
+    await manager.cloneForInstance(pristine, "A");
+
+    expect((await stat(runRoot)).mode & 0o777).toBe(0o700);
+  });
+
+  it("refuses a root that already exists as something other than its own directory", async () => {
+    const runRoot = path.join(root, "planted");
+    await writeFile(runRoot, "not a directory");
+    const manager = new FsWorkspaceManager(runRoot);
+    await expect(manager.preparePristine(sourceDir, { link: [], ignore: [] })).rejects.toThrow(/refusing to use workspace root/);
   });
 
   it("copies real files into the pristine dir but excludes .git and link targets", async () => {

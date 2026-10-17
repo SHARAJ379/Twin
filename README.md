@@ -193,7 +193,9 @@ running apps, in both directions — Twin correctly fails a broken app *and*
 passes a correctly built stateless one. `examples/broken-<stack>` /
 `examples/fixed-<stack>` are real apps in that language; CI boots them with a
 real toolchain for each and asserts `twin run`'s exit code and findings, the
-same shape across all five.
+same shape across all five. `twin run` inside any of them needs no flags: the
+fixed apps' `twin.config.json` supplies the shared secret and shared storage
+they need ([examples/README.md](examples/README.md)).
 
 ## Configuration
 
@@ -221,7 +223,8 @@ All fields are optional:
 | `portEnv`       | env var name the app reads its port from                        | `PORT`                                  |
 | `bootTimeoutMs` | boot timeout per instance, in ms                                 | `60000`                                 |
 | `requestTimeoutMs` | deadline for a single scenario request, in ms                 | `30000`                                 |
-| `env`           | extra env vars for every instance                                | `{}`                                    |
+| `env`           | extra env vars for every instance. `{{shared}}` in a value becomes a directory every instance of the run shares (see "What Twin can't see") | `{}` |
+| `sharedPaths`   | paths that are shared storage in production too (a mounted volume), relative to the project unless absolute | `[]` |
 | `allowRemote`   | allow running even if the environment looks like a real DB/service | `false`                             |
 | `allowRemoteHosts` | hosts vouched for individually; a leading dot is a domain suffix | `[]`                                 |
 | `redactHeaders` | extra header names to redact from the report's evidence          | `[]`                                    |
@@ -426,6 +429,39 @@ are never edited. Two things in the project do get touched, though:
 Anything outside the project is out of Twin's hands too: an absolute path in
 the env, `/tmp`, and the database the app connects to are all shared by both
 instances (see "What Twin can't see" below).
+
+## What Twin can't see
+
+**A and B run on the same machine, so they share its disk.** An app that keeps
+its data in a file outside its own directory would pass every check: a
+hardcoded `/tmp/items.json`, a `DATA_FILE=/home/me/app/data.json`, a SQLite
+file, or PHP's session files in the system temp directory. Both instances read
+and write the same file, so everything looks consistent. On two servers or two
+containers, each one has its own copy and the app breaks.
+
+Twin watches for this, but only partly:
+
+- Every env value that is an absolute local path gets a terminal note saying
+  both instances share it here and two servers wouldn't.
+- During SPLIT, Twin snapshots those paths (and the data files directly in the
+  system temp directory) before and after. If anything there was written,
+  every check that passed is reported as **NOT PROVEN** instead, and the run
+  exits `2` ("Twin couldn't tell"), never `0`.
+- It can't see a path that is hardcoded and not in the temp directory's top
+  level (`/var/lib/myapp/data.json`, `/tmp/myapp/data.json`). Keep data a
+  production deployment would need shared in a real shared store.
+
+When a path really is shared in production (a mounted network volume, say),
+say so, and writes there count as the app working as designed:
+
+- `"sharedPaths": ["/mnt/shared"]` in `twin.config.json`, or
+- `{{shared}}` in an env value (`"DATA_FILE": "{{shared}}/data.json"`). Twin
+  replaces it with a fresh directory that every instance of the run shares,
+  as a stand-in for that volume, and removes it afterwards. The
+  `examples/fixed-*` apps are set up this way.
+
+Twin also can't see your database: the instances are throwaway, but the
+database they connect to keeps what the scenario writes (see "How it works").
 
 ## Security
 

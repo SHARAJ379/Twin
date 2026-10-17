@@ -47,9 +47,23 @@ export function verdictSentence(verdict: Verdict, findings: readonly Finding[]):
       if (verdict.errored > 0) parts.push(`${verdict.errored} errored`);
       return `${parts.join("; ")} - this app is NOT safe to run on more than one instance.`;
     }
-    case "inconclusive":
+    case "inconclusive": {
+      const unproven = findings.filter((f) => f.unprovenBy === "shared-local-disk").length;
+      if (unproven > 0 && unproven === verdict.errored) {
+        return `${plural(unproven, "check")} passed only on a disk both instances share on this machine - NOT proven safe to run on more than one instance (separate servers or containers wouldn't share it).`;
+      }
       return total === 0
         ? "No checks ran - nothing in this scenario is tagged with `check:`, so Twin can't tell you anything about this app yet."
-        : `Twin could not tell: ${verdict.passed} of ${total} checks passed, ${verdict.errored} errored, ${verdict.skipped} skipped. Fix the above and re-run.`;
+        : `Twin could not tell: ${verdict.passed} of ${total} checks passed, ${verdict.errored} errored${
+            unproven > 0 ? ` (${unproven} of them not proven, on a shared local disk)` : ""
+          }, ${verdict.skipped} skipped. Fix the above and re-run.`;
+    }
   }
+}
+
+/** The status label a finding is shown with. */
+export function statusLabel(finding: Finding): string {
+  if (finding.status === "fail" && finding.blockedBy !== undefined) return "BLOCKED";
+  if (finding.unprovenBy !== undefined) return "NOT PROVEN";
+  return finding.status.toUpperCase();
 }

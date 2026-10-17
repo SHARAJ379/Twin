@@ -11,6 +11,7 @@ import { collectEnvCandidates, mergeEnvSources } from "../../domain/envSources.j
 import { TwinError } from "../../domain/errors.js";
 import { collectSecretEnvValues, createLogRedactor } from "../../domain/logRedaction.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
+import { changedPaths, isWithin, localPathsInEnv, markUnprovenByLocalDisk } from "../../domain/sharedDisk.js";
 import {
   scanEnvCandidatesForRemoteResources,
   scanForThirdPartyKeys,
@@ -25,6 +26,7 @@ import { loadTwinConfig } from "../../infra/config/loadTwinConfig.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS, HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
 import { runSetupCommand } from "../../infra/process/runSetupCommand.js";
+import { snapshotSharedPaths } from "../../infra/sharedDisk/snapshotPaths.js";
 import { HttpProxy } from "../../infra/proxy/httpProxy.js";
 import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
 import { loadSourceFilesForSafetyScan } from "../../infra/safety/loadSourceFiles.js";
@@ -70,6 +72,8 @@ const PROFILE: DeploymentProfile = "ephemeral";
 const DEFAULT_HEALTH_PATH = "/health";
 const DEFAULT_PORT_ENV = "PORT";
 const DEFAULT_BOOT_TIMEOUT_MS = 60_000;
+/** Replaced, in env values, with a directory every instance of this run shares. */
+const SHARED_PLACEHOLDER = "{{shared}}";
 
 function formatScenarioErrors(errors: ScenarioParseError[]): string {
   return errors
@@ -247,7 +251,44 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       redactLogLine
     );
     const scenarioClient = new HttpScenarioClient();
-    const startSpec = { command: start, build, portEnv, env, healthPath, bootTimeoutMs };
+
+    // `{{shared}}` in an env value is this run's stand-in for the shared
+    // volume or bucket production would give every instance - declared
+    // shared, so writes there are the app working as designed.
+    const usesShared = Object.values(env).some((value) => value.includes(SHARED_PLACEHOLDER));
+    const sharedDir = usesShared ? await workspaceManager.sharedDir() : undefined;
+    const instanceEnv =
+      sharedDir === undefined
+        ? env
+        : Object.fromEntries(Object.entries(env).map(([key, value]) => [key, value.split(SHARED_PLACEHOLDER).join(sharedDir)]));
+    const declaredShared = [
+      ...(sharedDir !== undefined ? [sharedDir] : []),
+      ...(config?.sharedPaths ?? []).map((p) => path.resolve(options.projectDir, p))
+    ];
+
+    // Absolute paths in the env are on this machine's disk, which A and B
+    // share here and two servers wouldn't. Said whenever there is one; the
+    // snapshots around SPLIT below find out whether the app actually wrote there.
+    const envPaths = localPathsInEnv(
+      [
+        ...dotEnvFiles.map((file) => ({ vars: file.vars, ambient: false })),
+        { vars: process.env, ambient: true },
+        { vars: instanceEnv, ambient: false }
+      ],
+      path.delimiter
+    ).filter((p) => !declaredShared.some((root) => isWithin(p.path, root, path.sep, process.platform === "win32")));
+    for (const { key, path: localPath } of envPaths) {
+      logger.info(
+        `note: ${key} is a path on this machine (${localPath}) - both instances share it here, but two servers or containers wouldn't. If it really is shared storage in production, list it in "sharedPaths" in twin.config.json`
+      );
+    }
+    const sharedDiskPlan = {
+      envPaths: envPaths.map((p) => p.path),
+      tmpDirs: [...new Set([os.tmpdir(), path.resolve("/tmp"), ...(process.platform === "win32" ? [] : ["/var/tmp"])])],
+      exclude: [options.projectDir, path.join(os.tmpdir(), `twin-${run.id}`), ...declaredShared]
+    };
+
+    const startSpec = { command: start, build, portEnv, env: instanceEnv, healthPath, bootTimeoutMs };
     const clientOptions = { requestTimeoutMs, redactExtraHeaders };
 
     teardown = async () => {
@@ -267,7 +308,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     const runSetup = async (phase: string): Promise<void> => {
       if (setup === undefined) return;
       logger.info(`setup: running \`${setup}\` before ${phase}`);
-      await runSetupCommand(setup, { cwd: options.projectDir, env, phase, redactLine: redactLogLine });
+      await runSetupCommand(setup, { cwd: options.projectDir, env: instanceEnv, phase, redactLine: redactLogLine });
     };
     if (setup === undefined) {
       logger.info(
@@ -292,6 +333,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
 
     await runSetup("SPLIT");
     logger.info("SPLIT: running the scenario against A + B behind the proxy");
+    const diskBefore = await snapshotSharedPaths(sharedDiskPlan);
     const proxy = new HttpProxy({ upstreamTimeoutMs: requestTimeoutMs });
     const split = await runSplitPhase(
       scenario,
@@ -308,14 +350,26 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       scenarioClient
     );
 
-    const evaluated = evaluate({
-      scenario,
-      controlResults: control.results,
-      splitResults: split.results,
-      workspaceDiffs: split.workspaceDiffs,
-      checks: builtInChecks,
-      profile: PROFILE
-    });
+    // Written during SPLIT, outside both workspaces and outside anything
+    // declared shared: a store A and B only share because they're on one disk.
+    const writtenShared = changedPaths(diskBefore, await snapshotSharedPaths(sharedDiskPlan));
+    if (writtenShared.length > 0) {
+      logger.warn("both instances wrote to files outside their own workspaces, on a disk only this machine gives them", {
+        paths: writtenShared
+      });
+    }
+
+    const evaluated = markUnprovenByLocalDisk(
+      evaluate({
+        scenario,
+        controlResults: control.results,
+        splitResults: split.results,
+        workspaceDiffs: split.workspaceDiffs,
+        checks: builtInChecks,
+        profile: PROFILE
+      }),
+      writtenShared
+    );
 
     logger.info("TRACE: mapping any failing checks to likely code locations");
     const findings = await traceFindings(evaluated, options.projectDir, split.workspaceDiffs, stack, split.results);

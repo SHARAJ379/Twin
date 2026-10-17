@@ -190,6 +190,18 @@ export class FsWorkspaceManager implements WorkspaceManager {
     return this.rootReady;
   }
 
+  /**
+   * The run's `{{shared}}` directory: one place every instance is pointed at,
+   * standing in for the shared volume or bucket production would give them.
+   * Under the 0700 root like everything else, and removed with it.
+   */
+  async sharedDir(): Promise<string> {
+    await this.ensureRoot();
+    const dir = path.join(this.root, "shared");
+    await mkdir(dir, { recursive: true });
+    return dir;
+  }
+
   async preparePristine(sourceDir: string, options: WorkspaceOptions): Promise<string> {
     const resolvedSource = path.resolve(sourceDir);
     const cached = this.pristineBySource.get(resolvedSource);

@@ -9,6 +9,14 @@ shift between minor versions.
 
 ### Fixed
 
+- A store that A and B share only because Twin runs them on one machine no longer passes as
+  safe. An app keeping its items in `/tmp/twin-demo-items.json`, or at an absolute `DATA_FILE`,
+  passed data-consistency and restart-persistence ("safe to run on more than one instance", exit
+  0) and broke on two servers. Twin now notes every absolute local path in the env, snapshots
+  those paths and the temp directory's data files around SPLIT, and if anything there was
+  written, reports each passing check as NOT PROVEN (exit 2). Storage that is shared in
+  production too can be declared: `"sharedPaths"` in `twin.config.json`, or `{{shared}}` in an
+  env value - a per-run directory every instance shares, standing in for a shared volume.
 - Every run says, in the terminal and the README, that the scenario's records stay in the
   database the app is configured with. Nothing said so, and a dev database filled up with test
   users one run at a time.

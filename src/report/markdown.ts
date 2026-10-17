@@ -2,9 +2,8 @@ import type { Finding } from "../domain/check.js";
 import type { DeploymentProfile } from "../domain/deploymentProfile.js";
 import type { Verdict } from "../domain/verdict.js";
 import { buildFixPrompt } from "./fixPrompt.js";
-import { getsFixPrompt, verdictSentence } from "./verdictSummary.js";
+import { getsFixPrompt, statusLabel, verdictSentence } from "./verdictSummary.js";
 
-const HEADING: Record<Finding["status"], string> = { pass: "PASS", fail: "FAIL", error: "ERROR", skipped: "SKIPPED" };
 
 /** The human/Claude-friendly report (§7.8): includes a ready-to-paste fix prompt per failed check. */
 export function renderMarkdownReport(
@@ -25,7 +24,7 @@ export function renderMarkdownReport(
   for (const finding of findings) {
     const blocked = finding.status === "fail" && finding.blockedBy !== undefined;
     const prompt = getsFixPrompt(finding, findings);
-    lines.push(`## ${blocked ? "BLOCKED" : HEADING[finding.status]} — ${finding.checkId}`, "", finding.summary, "");
+    lines.push(`## ${statusLabel(finding)} — ${finding.checkId}`, "", finding.summary, "");
     if (blocked && !prompt) {
       lines.push(
         "_Blocked: rejected (401/403) on another instance, so this check never reached what it tests. The session bug above is the cause, not a separate one._",

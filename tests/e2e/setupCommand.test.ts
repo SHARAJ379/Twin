@@ -82,7 +82,9 @@ describe("the setup command", () => {
     await writeFile(path.join(projectDir, "server.js"), APP, "utf8");
     await writeFile(path.join(projectDir, "reset.js"), RESET, "utf8");
     await writeFile(path.join(projectDir, "scenario.yaml"), SCENARIO, "utf8");
-    await writeFile(path.join(projectDir, "twin.config.json"), JSON.stringify(config), "utf8");
+    // The "database" directory stands in for a database server, which every
+    // instance shares in production too - so it's declared shared storage.
+    await writeFile(path.join(projectDir, "twin.config.json"), JSON.stringify({ ...config, sharedPaths: [dbDir] }), "utf8");
   }
 
   const run = (env: Record<string, string> = {}): Promise<number> =>

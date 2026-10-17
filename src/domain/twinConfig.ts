@@ -20,6 +20,12 @@ export interface TwinConfig {
   allowRemote?: boolean;
   /** Hosts allowed individually, instead of switching the whole remote check off. A leading dot is a domain suffix. */
   allowRemoteHosts?: string[];
+  /**
+   * Paths that are shared storage in production too (a mounted volume, a
+   * network share), relative to the project unless absolute. Writes there
+   * don't count as instances sharing a disk by accident (domain/sharedDisk.ts).
+   */
+  sharedPaths?: string[];
   /** Extra header names to redact from report evidence, beyond the built-in list. */
   redactHeaders?: string[];
 }
@@ -34,7 +40,7 @@ export type TwinConfigValidationResult = { ok: true; config: TwinConfig } | { ok
 
 const STRING_FIELDS = ["scenario", "stack", "start", "build", "setup", "healthPath", "portEnv"] as const;
 const NUMBER_FIELDS = ["bootTimeoutMs", "requestTimeoutMs"] as const;
-const STRING_ARRAY_FIELDS = ["redactHeaders", "allowRemoteHosts"] as const;
+const STRING_ARRAY_FIELDS = ["redactHeaders", "allowRemoteHosts", "sharedPaths"] as const;
 const ALLOWED_KEYS = new Set<string>([...STRING_FIELDS, ...NUMBER_FIELDS, ...STRING_ARRAY_FIELDS, "env", "allowRemote"]);
 
 /** No YAML/ajv here on purpose (cf. domain/jsonPath.ts) - a flat handful of fields doesn't earn the dependency. */

@@ -29,6 +29,13 @@ interface FindingBase {
    * request never got to.
    */
   blockedBy?: "auth" | undefined;
+  /**
+   * Why a check that passed doesn't count as proof (domain/sharedDisk.ts):
+   * both instances wrote to a local file outside their own workspaces, which
+   * they share only because Twin runs them on one machine. Always on an
+   * "error" finding, so the verdict can't call the app safe.
+   */
+  unprovenBy?: "shared-local-disk" | undefined;
 }
 
 export type Finding =

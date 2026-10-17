@@ -2,7 +2,7 @@ import type { Finding } from "../domain/check.js";
 import type { DeploymentProfile } from "../domain/deploymentProfile.js";
 import type { Verdict } from "../domain/verdict.js";
 import { buildFixPrompt } from "./fixPrompt.js";
-import { getsFixPrompt, verdictSentence } from "./verdictSummary.js";
+import { getsFixPrompt, statusLabel, verdictSentence } from "./verdictSummary.js";
 
 const ICON: Record<Finding["status"], string> = { pass: "✓", fail: "✗", error: "⚠", skipped: "·" };
 
@@ -12,7 +12,7 @@ const BLOCKED_NOTE =
 function renderFinding(finding: Finding, findings: readonly Finding[], profile: DeploymentProfile): string[] {
   const lines: string[] = [];
   const blocked = finding.status === "fail" && finding.blockedBy !== undefined;
-  const label = blocked ? "BLOCKED" : finding.status.toUpperCase();
+  const label = statusLabel(finding);
   lines.push(`${ICON[finding.status]} ${label.padEnd(7)} ${finding.checkId}`);
   lines.push(`  ${finding.summary}`);
   const prompt = getsFixPrompt(finding, findings);

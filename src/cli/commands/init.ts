@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
@@ -60,6 +60,28 @@ async function writeIfAbsent(filePath: string, contents: string, force: boolean,
   return true;
 }
 
+/**
+ * Adds `.twin/` to the project's .gitignore, creating it if need be. Every
+ * run writes reports, results and instance logs there, none of which belong
+ * in version control. Leaves a file that already ignores it untouched.
+ */
+async function ignoreTwinDir(projectDir: string, logger: Logger): Promise<void> {
+  const gitignorePath = path.join(projectDir, ".gitignore");
+  let existing = "";
+  try {
+    existing = await readFile(gitignorePath, "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  const lines = existing.split(/\r?\n/).map((line) => line.trim());
+  if (lines.some((line) => [".twin", ".twin/", "/.twin", "/.twin/"].includes(line))) return;
+
+  const eol = existing.includes("\r\n") ? "\r\n" : "\n";
+  const separator = existing.length === 0 || existing.endsWith("\n") ? "" : eol;
+  await writeFile(gitignorePath, `${existing}${separator}# Twin's run reports and logs${eol}.twin/${eol}`, "utf8");
+  logger.info(existing.length === 0 ? "wrote .gitignore with .twin/ in it" : "added .twin/ to .gitignore", { path: gitignorePath });
+}
+
 /** `twin init`: scaffolds a starter scenario.yaml and a twin.config.json so a bare `twin run` works afterward. */
 export async function initCommand(options: InitOptions, logger: Logger): Promise<void> {
   const scenarioPath = path.isAbsolute(options.scenarioPath) ? options.scenarioPath : path.join(options.projectDir, options.scenarioPath);
@@ -93,6 +115,8 @@ export async function initCommand(options: InitOptions, logger: Logger): Promise
   const configPath = path.join(options.projectDir, TWIN_CONFIG_FILENAME);
   const wroteConfig = await writeIfAbsent(configPath, `${JSON.stringify(config, null, 2)}\n`, options.force, logger, TWIN_CONFIG_FILENAME);
   if (wroteConfig) logger.info(`wrote ${TWIN_CONFIG_FILENAME}`, { path: configPath, ...config });
+
+  await ignoreTwinDir(options.projectDir, logger);
 
   logger.info(start === undefined ? "next: edit twin.config.json to add a start command, then run `twin run`" : "next: run `twin run`");
 }

@@ -60,4 +60,35 @@ describe("initCommand", () => {
 
     expect(await readFile(path.join(projectDir, "scenario.yaml"), "utf8")).toContain("name: starter");
   });
+
+  /** Audit, third round: every run writes `.twin/`, and nothing kept it out of git. */
+  describe(".gitignore", () => {
+    const gitignore = (): Promise<string> => readFile(path.join(projectDir, ".gitignore"), "utf8");
+
+    it("creates one with .twin/ in it when the project has none", async () => {
+      projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-init-"));
+      await initCommand({ projectDir, scenarioPath: "scenario.yaml", force: false }, logger);
+      expect((await gitignore()).split("\n")).toContain(".twin/");
+    });
+
+    it("appends to an existing one, keeping its contents and line endings, and doesn't duplicate on a second init", async () => {
+      projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-init-"));
+      await writeFile(path.join(projectDir, ".gitignore"), "node_modules\r\n.env", "utf8");
+
+      await initCommand({ projectDir, scenarioPath: "scenario.yaml", force: false }, logger);
+      await initCommand({ projectDir, scenarioPath: "scenario.yaml", force: true }, logger);
+
+      const text = await gitignore();
+      expect(text.startsWith("node_modules\r\n.env\r\n")).toBe(true);
+      expect(text.match(/^\.twin\/$/gm)).toHaveLength(1);
+      expect(text.replace(/\r\n/g, "")).not.toContain("\n");
+    });
+
+    it.each([".twin", "/.twin/", ".twin/"])("leaves a .gitignore that already has %s alone", async (entry) => {
+      projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-init-"));
+      await writeFile(path.join(projectDir, ".gitignore"), `dist\n${entry}\n`, "utf8");
+      await initCommand({ projectDir, scenarioPath: "scenario.yaml", force: false }, logger);
+      expect(await gitignore()).toBe(`dist\n${entry}\n`);
+    });
+  });
 });

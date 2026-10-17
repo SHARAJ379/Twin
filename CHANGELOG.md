@@ -9,6 +9,9 @@ shift between minor versions.
 
 ### Fixed
 
+- `twin init` adds `.twin/` to the project's `.gitignore` (creating it if missing, never
+  duplicating the entry), and the README no longer claims Twin "never touches your actual source
+  tree": it writes `.twin/`, and the instances share the real `node_modules`/`.venv`/`vendor`.
 - On Windows, a slow first process lookup no longer makes a lock's holder "unknown". PowerShell's
   first CIM query on a machine can take over ten seconds; it timed out, and a stale lock whose
   pid had been reused was refused as unconfirmable. A timed-out lookup is now asked once more

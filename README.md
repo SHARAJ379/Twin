@@ -279,7 +279,9 @@ useful in CI, or to look at a result again after the terminal's scrolled away.
 ### `twin init`
 
 Scaffolds a starter `scenario.yaml` and `twin.config.json`. Never overwrites an
-existing file unless `--force` is passed.
+existing file unless `--force` is passed. It also adds `.twin/` (where every run
+writes its reports and logs) to the project's `.gitignore`, creating the file if
+there isn't one and leaving it alone if `.twin` is already listed.
 
 ```
 --project <dir>    project directory to scaffold into (default: cwd)
@@ -398,9 +400,21 @@ and the tail of it is printed inline when an instance fails to boot - that outpu
 usually the whole diagnosis (a missing build step, a wrong port env var, a crash on
 startup).
 
-Every run is **ephemeral**: Twin clones your project into temp workspaces per
-instance (symlinking `node_modules`), runs there, and tears everything down
-afterward. It never touches your actual source tree.
+Every run is **ephemeral**: Twin copies your project into a temp workspace per
+instance, runs there, and tears everything down afterward. Your source files
+are never edited. Two things in the project do get touched, though:
+
+- **`.twin/`**: each run writes its reports, `results.json` and instance logs
+  to `.twin/runs/<id>/`, and keeps its lock there. `twin init` adds `.twin/`
+  to `.gitignore`.
+- **Dependency directories are shared, not copied.** Each workspace links to
+  the project's real `node_modules`, `.venv`/`venv` or `vendor`, so an app that
+  writes into its own dependency directory at runtime writes into yours, and
+  both instances see the same one.
+
+Anything outside the project is out of Twin's hands too: an absolute path in
+the env, `/tmp`, and the database the app connects to are all shared by both
+instances (see "What Twin can't see" below).
 
 ## Security
 

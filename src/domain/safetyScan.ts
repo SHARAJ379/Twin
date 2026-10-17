@@ -199,8 +199,19 @@ function isLocalHost(hostname: string): boolean {
     normalized === "0.0.0.0" ||
     normalized === "host.docker.internal" || // the dev machine itself, reached from inside a container
     normalized.endsWith(".localhost") ||
-    normalized.endsWith(".local")
+    normalized.endsWith(".local") ||
+    isReservedName(normalized)
   );
+}
+
+/**
+ * Names that can never resolve to a real server (RFC 2606 / RFC 6761):
+ * `example.com` and friends, and the `.test`, `.example` and `.invalid`
+ * TLDs. They are what test fixtures and docs use precisely because of that,
+ * and refusing on one blocked a run over a string in `test/config.test.js`.
+ */
+function isReservedName(host: string): boolean {
+  return /(^|\.)example\.(com|net|org)$/.test(host) || /(^|\.)(test|example|invalid)$/.test(host);
 }
 
 /** "[::1]:6379" -> "[::1]", "db.example.com:5432" -> "db.example.com", "db" -> "db". */
@@ -301,6 +312,19 @@ const LOCAL_EMULATOR_KEY_PATTERN =
  * than being guessed at.
  */
 function hostsIn(value: string, allowBareHost: boolean): string[] {
+  const hosts = authorityHosts(value, allowBareHost);
+  // Cloudinary's "host" is the account's cloud name, not a hostname - it is
+  // never dotted, and it is always the real account.
+  if (schemeOf(value) === "cloudinary") return hosts;
+  // A dotless name is a docker-compose service or a local alias whether it
+  // arrives bare (`DB_HOST=db`) or inside a URL (`postgres://u@db:5432`) -
+  // the URL form used to be refused, which refused every Compose project once
+  // docker-compose.yml was scanned. IPv6 literals are kept as they are.
+  return hosts.filter((host) => host.startsWith("[") || looksLikeBareHostname(host));
+}
+
+/** Every host named in a value's authority, unfiltered: `localhost` included. */
+function authorityHosts(value: string, allowBareHost: boolean): string[] {
   let rest = value.trim();
   if (rest.length === 0 || /\s/.test(rest)) return [];
   rest = rest.replace(/^jdbc:/i, ""); // jdbc:postgresql://host:5432/db
@@ -320,13 +344,10 @@ function hostsIn(value: string, allowBareHost: boolean): string[] {
   const at = authority.lastIndexOf("@");
   if (at !== -1) authority = authority.slice(at + 1);
 
-  const hosts = authority
+  return authority
     .split(",")
     .map(stripPort)
     .filter((host) => host.length > 0);
-
-  // With no scheme to vouch for it, the value has to look like a hostname on its own.
-  return schemeIdx === -1 ? hosts.filter(looksLikeBareHostname) : hosts;
 }
 
 /**
@@ -375,7 +396,7 @@ export function scanEnvCandidatesForRemoteResources(
   // bucket or project id alongside it names nothing real.
   const sdkPointedLocal = candidates.some(
     ({ key, value }) =>
-      LOCAL_EMULATOR_KEY_PATTERN.test(key) && [...hostsIn(value, true), stripPort(value)].some((host) => isLocalHost(host))
+      LOCAL_EMULATOR_KEY_PATTERN.test(key) && authorityHosts(value, true).some((host) => isLocalHost(host))
   );
   for (const { key, value, source } of candidates) {
     if (CLOUD_TARGET_KEY_PATTERN.test(key)) {

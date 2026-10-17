@@ -35,8 +35,8 @@ describe("scanForRemoteResources", () => {
 
   it("flags multiple suspicious vars independently", () => {
     const found = scanForRemoteResources({
-      DATABASE_URL: "postgres://host-a.example.com/db",
-      REDIS_URL: "redis://host-b.example.com:6379"
+      DATABASE_URL: "postgres://host-a.acme-corp.io/db",
+      REDIS_URL: "redis://host-b.acme-corp.io:6379"
     });
     expect(found).toHaveLength(2);
   });
@@ -52,40 +52,40 @@ describe("scanForRemoteResources", () => {
 
   it("still flags a bare DB_URL/DSN without a named provider", () => {
     const found = scanForRemoteResources({
-      DB_URL: "postgres://host.example.com/app",
-      APP_DSN: "sentry://host.example.com/1"
+      DB_URL: "postgres://host.acme-corp.io/app",
+      APP_DSN: "sentry://host.acme-corp.io/1"
     });
     expect(found).toHaveLength(2);
   });
 
   it("flags a split-out host setting, which has no URL to parse", () => {
-    const found = scanForRemoteResources({ DB_HOST: "prod-db.example.com", DB_USER: "app", DB_PASSWORD: "hunter2" });
-    expect(found).toEqual([{ key: "DB_HOST", host: "prod-db.example.com" }]);
+    const found = scanForRemoteResources({ DB_HOST: "prod-db.acme-corp.io", DB_USER: "app", DB_PASSWORD: "hunter2" });
+    expect(found).toEqual([{ key: "DB_HOST", host: "prod-db.acme-corp.io" }]);
   });
 
   it("flags libpq's glued PGHOST", () => {
-    expect(scanForRemoteResources({ PGHOST: "prod.db.example.com" })).toEqual([
-      { key: "PGHOST", host: "prod.db.example.com" }
+    expect(scanForRemoteResources({ PGHOST: "prod.db.acme-corp.io" })).toEqual([
+      { key: "PGHOST", host: "prod.db.acme-corp.io" }
     ]);
   });
 
   it("flags a host setting that carries a port", () => {
-    expect(scanForRemoteResources({ MYSQL_HOST: "db.example.com:3306" })).toEqual([
-      { key: "MYSQL_HOST", host: "db.example.com" }
+    expect(scanForRemoteResources({ MYSQL_HOST: "db.acme-corp.io:3306" })).toEqual([
+      { key: "MYSQL_HOST", host: "db.acme-corp.io" }
     ]);
   });
 
   it("flags every host in a comma-separated seed list, deduplicated", () => {
-    const found = scanForRemoteResources({ KAFKA_BOOTSTRAP_SERVERS: "b1.example.com:9092,b2.example.com:9092,b1.example.com:9092" });
+    const found = scanForRemoteResources({ KAFKA_BOOTSTRAP_SERVERS: "b1.acme-corp.io:9092,b2.acme-corp.io:9092,b1.acme-corp.io:9092" });
     expect(found).toEqual([
-      { key: "KAFKA_BOOTSTRAP_SERVERS", host: "b1.example.com" },
-      { key: "KAFKA_BOOTSTRAP_SERVERS", host: "b2.example.com" }
+      { key: "KAFKA_BOOTSTRAP_SERVERS", host: "b1.acme-corp.io" },
+      { key: "KAFKA_BOOTSTRAP_SERVERS", host: "b2.acme-corp.io" }
     ]);
   });
 
   it("flags a jdbc connection string", () => {
-    expect(scanForRemoteResources({ DATABASE_URL: "jdbc:postgresql://db.example.com:5432/app" })).toEqual([
-      { key: "DATABASE_URL", host: "db.example.com" }
+    expect(scanForRemoteResources({ DATABASE_URL: "jdbc:postgresql://db.acme-corp.io:5432/app" })).toEqual([
+      { key: "DATABASE_URL", host: "db.acme-corp.io" }
     ]);
   });
 
@@ -114,10 +114,10 @@ describe("scanForRemoteResources", () => {
 
   it("lets an explicitly vouched-for host through while still checking the rest", () => {
     const found = scanForRemoteResources(
-      { DATABASE_URL: "postgres://user:pass@allowed.example.com/app", REDIS_URL: "redis://other.example.com:6379" },
-      { allowedHosts: ["allowed.example.com"] }
+      { DATABASE_URL: "postgres://user:pass@allowed.acme-corp.io/app", REDIS_URL: "redis://other.acme-corp.io:6379" },
+      { allowedHosts: ["allowed.acme-corp.io"] }
     );
-    expect(found).toEqual([{ key: "REDIS_URL", host: "other.example.com" }]);
+    expect(found).toEqual([{ key: "REDIS_URL", host: "other.acme-corp.io" }]);
   });
 
   it("treats a leading dot as a domain suffix, so a whole cluster takes one entry", () => {
@@ -129,20 +129,20 @@ describe("scanForRemoteResources", () => {
   });
 
   it("matches a vouched host case-insensitively but never by partial name", () => {
-    expect(scanForRemoteResources({ DB_HOST: "Prod.Example.COM" }, { allowedHosts: ["prod.example.com"] })).toEqual([]);
-    // "example.com" must not vouch for "evil-example.com" or a subdomain.
-    expect(scanForRemoteResources({ DB_HOST: "evil-example.com" }, { allowedHosts: ["example.com"] })).toHaveLength(1);
-    expect(scanForRemoteResources({ DB_HOST: "sub.example.com" }, { allowedHosts: ["example.com"] })).toHaveLength(1);
+    expect(scanForRemoteResources({ DB_HOST: "Prod.Example.COM" }, { allowedHosts: ["prod.acme-corp.io"] })).toEqual([]);
+    // "acme-corp.io" must not vouch for "evil-acme-corp.io" or a subdomain.
+    expect(scanForRemoteResources({ DB_HOST: "evil-acme-corp.io" }, { allowedHosts: ["acme-corp.io"] })).toHaveLength(1);
+    expect(scanForRemoteResources({ DB_HOST: "sub.acme-corp.io" }, { allowedHosts: ["acme-corp.io"] })).toHaveLength(1);
   });
 
   it("ignores an empty allowlist entry rather than vouching for everything", () => {
-    expect(scanForRemoteResources({ DB_HOST: "prod.example.com" }, { allowedHosts: ["", "  "] })).toHaveLength(1);
+    expect(scanForRemoteResources({ DB_HOST: "prod.acme-corp.io" }, { allowedHosts: ["", "  "] })).toHaveLength(1);
   });
 
   it("does not flag a unix socket path or an ambient HOSTNAME", () => {
     const found = scanForRemoteResources({
       HOSTNAME: "fv-az1234-567", // set on every Linux CI runner
-      HOST: "runner.internal.example.com",
+      HOST: "runner.internal.acme-corp.io",
       PGHOST_DIR: "/var/run/postgresql",
       DATABASE_URL: "/var/run/postgresql/.s.PGSQL.5432"
     });
@@ -245,4 +245,31 @@ describe("scanForThirdPartyKeys: credentials, not configuration", () => {
   it("doesn't warn about a key that is declared but empty", () => {
     expect(scanForThirdPartyKeys({ OPENAI_API_KEY: "" })).toEqual([]);
   });
+});
+
+/**
+ * Found by an external audit: once docker-compose.yml was scanned, every
+ * Compose project was refused - `postgres://u:p@db:5432` names a container,
+ * and the dotless-is-local rule only applied to bare host values. And a
+ * fixture's `cluster0.example.net` blocked a run, though RFC 2606 reserves it.
+ */
+describe("names that can't be a remote production server", () => {
+  it("treats a dotless host inside a URL as a compose service, like a bare one", () => {
+    expect(scanForRemoteResources({ DATABASE_URL: "postgres://app:pw@db:5432/app", REDIS_URL: "redis://redis:6379" })).toEqual([]);
+    expect(
+      scanSourceForRemoteResources([{ path: "docker-compose.yml", content: '      DATABASE_URL: "postgres://app:pw@db:5432/app"' }])
+    ).toEqual([]);
+  });
+
+  it("still refuses a dotless host that names production, and any dotted one", () => {
+    expect(scanForRemoteResources({ DATABASE_URL: "postgres://app@prod-db:5432/app" }).map((r) => r.host)).toEqual(["prod-db"]);
+    expect(scanForRemoteResources({ DATABASE_URL: "postgres://app@10.0.4.12:5432/app" }).map((r) => r.host)).toEqual(["10.0.4.12"]);
+  });
+
+  it.each(["cluster0.example.net", "db.example.com", "example.org", "db.test", "x.example", "nope.invalid"])(
+    "never refuses the reserved name %s",
+    (host) => {
+      expect(scanForRemoteResources({ MONGODB_URI: `mongodb://u:p@${host}/app` })).toEqual([]);
+    }
+  );
 });

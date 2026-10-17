@@ -17,8 +17,19 @@ const IGNORED_DIRS = new Set([
   "coverage",
   "uploads",
   "tmp",
-  "log"
+  "log",
+  // Tests aren't what the app runs, and their fixtures are full of
+  // connection strings that look real on purpose.
+  "test",
+  "tests",
+  "__tests__",
+  "spec",
+  "e2e",
+  "fixtures"
 ]);
+
+/** `config.test.js`, `db.spec.ts`, `store_test.go`, `test_db.py`. */
+const TEST_FILE = /\.(test|spec)\.[^.]+$|_test\.go$|^test_.*\.py$|_spec\.rb$/;
 
 /** A minified bundle or a data dump is not where anyone writes `mongoose.connect(...)`. */
 const MAX_FILE_BYTES = 512 * 1024;
@@ -50,7 +61,7 @@ export async function loadSourceFilesForSafetyScan(
         if (!IGNORED_DIRS.has(entry.name)) await walk(fullPath);
         continue;
       }
-      if (!entry.isFile() || !wanted.has(path.extname(entry.name)) || entry.name.endsWith(".lock.json")) continue;
+      if (!entry.isFile() || !wanted.has(path.extname(entry.name)) || TEST_FILE.test(entry.name)) continue;
       if (entry.name === "package-lock.json") continue;
       try {
         if ((await stat(fullPath)).size > MAX_FILE_BYTES) continue;

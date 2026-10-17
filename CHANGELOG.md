@@ -9,6 +9,11 @@ shift between minor versions.
 
 ### Fixed
 
+- Docker Compose projects aren't refused. A dotless host is a compose service whether it's bare
+  (`DB_HOST=db`) or in a URL (`postgres://u@db:5432`); the URL form was refused, which refused
+  every Compose project once `docker-compose.yml` was scanned. RFC 2606 names (`example.com`,
+  `.test`, `.example`, `.invalid`) are never treated as real servers, and the source scan skips
+  tests and fixtures, which hold real-looking connection strings on purpose.
 - A start command that backgrounds its server (`node server.js &`, a script that does the same)
   works on macOS and Linux: the instance is judged by its process group, which the server stays
   in, not by the launching shell, which exits at once. That shell exiting used to be reported as

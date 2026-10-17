@@ -19,6 +19,11 @@ shift between minor versions.
   (`pm2 start`, a `--daemon` flag) now fails once with `E_BOOT_DETACHED`, saying to run it in the
   foreground, and is not retried; Twin releases the pipes either way, and `twin clean` reaps a
   process group whose leader has exited.
+- Two easy scenario typos get one error that says what to do. An unquoted template
+  (`path: {{id}}`) printed a raw yaml-library warning and then errors about a nested mapping
+  nobody wrote; it now says to write `"{{id}}"`. `status: "200"` says to write `200`. And a
+  request step's errors no longer include the restart and wait step shapes' complaints
+  ("must have required property 'instance'", "unknown property 'request'").
 - A check now fails when the split run's response lost data the single instance returned, even
   if it passed the scenario's own `expect:`. An app keeping sessions in memory, whose logged-out
   `/me` answers `200 {"user": null}`, passed the README's own scenario (which expects only a

@@ -1,6 +1,6 @@
 import type { ErrorObject } from "ajv";
 import { createRequire } from "node:module";
-import { parseDocument, type Document } from "yaml";
+import { isCollection, parseDocument, visit, type Document } from "yaml";
 
 import type { Scenario } from "./scenario.js";
 import { scenarioSchema } from "./scenarioSchema.js";
@@ -62,15 +62,88 @@ function locate(doc: Document, instancePath: string, source: string): { line?: n
   }
 }
 
-function formatAjvError(err: ErrorObject): string {
+const STEP_PATH = /^\/steps\/(\d+)$/;
+const STEP_KINDS = ["request", "restart", "wait"] as const;
+
+function formatAjvError(err: ErrorObject, data: unknown): string {
   if (err.keyword === "additionalProperties") {
     const extra = (err.params as { additionalProperty?: string }).additionalProperty;
     return `unknown property "${extra ?? "?"}"`;
   }
-  if (err.keyword === "oneOf") {
+  if (err.keyword === "oneOf" && STEP_PATH.test(err.instancePath)) {
     return `does not match any known step shape (request/restart/wait) - check "kind" and required fields`;
   }
+  if (err.keyword === "oneOf" && err.instancePath.endsWith("/expect/status")) {
+    const value = valueAt(data, err.instancePath);
+    return typeof value === "string"
+      ? `${err.instancePath} must be a number, not a string - write ${value}, not "${value}"`
+      : `${err.instancePath} must be a status code or a list of them, e.g. 200 or [200, 201]`;
+  }
   return `${err.instancePath.length > 0 ? err.instancePath : "(root)"} ${err.message ?? "is invalid"}`;
+}
+
+function valueAt(data: unknown, instancePath: string): unknown {
+  return pointerToPath(instancePath).reduce<unknown>(
+    (node, key) => (node !== null && typeof node === "object" ? (node as Record<string | number, unknown>)[key] : undefined),
+    data
+  );
+}
+
+/**
+ * The step union is a oneOf, and Ajv reports every branch's complaints: a
+ * request step with one bad field also "must have required property
+ * 'instance'" (restart) and has an "unknown property 'request'" (wait). Those
+ * are noise when the step says which kind it is, so only its own branch's
+ * errors are kept - and the oneOf summary only when there is nothing more
+ * specific to say. A step with no usable `kind` keeps one clear error.
+ */
+function relevantErrors(errors: readonly ErrorObject[], data: unknown): ErrorObject[] {
+  const kindOf = (stepIndex: string): string | undefined => {
+    const kind = valueAt(data, `/steps/${stepIndex}/kind`);
+    return typeof kind === "string" && (STEP_KINDS as readonly string[]).includes(kind) ? kind : undefined;
+  };
+
+  const kept = errors.filter((err) => {
+    const step = /^\/steps\/(\d+)(\/|$)/.exec(err.instancePath)?.[1];
+    if (step === undefined) return true;
+    const kind = kindOf(step);
+    const branch = /#\/\$defs\/(request|restart|wait)Step\//.exec(err.schemaPath)?.[1];
+    if (kind === undefined) return err.keyword === "oneOf" && STEP_PATH.test(err.instancePath);
+    if (branch !== undefined) return branch === kind;
+    // The step-level oneOf summary: redundant once the branch says what's wrong.
+    return !(err.keyword === "oneOf" && STEP_PATH.test(err.instancePath));
+  });
+
+  // A oneOf nested inside the step (status: integer | integer[]) also reports
+  // each alternative; its own summary, reworded above, says it better.
+  const nestedOneOf = new Set(kept.filter((err) => err.keyword === "oneOf").map((err) => err.instancePath));
+  return kept.filter((err) => err.keyword === "oneOf" || !nestedOneOf.has(err.instancePath));
+}
+
+/**
+ * `path: {{id}}` unquoted is a YAML flow mapping whose key is another
+ * mapping - easy to write, since templates use `{{ }}`. The yaml library
+ * prints a raw "Keys with collection values will be stringified" warning for
+ * it, then the schema reports errors about something the user never wrote.
+ * Caught before either, with the fix spelled out.
+ */
+function unquotedTemplates(doc: Document, source: string): ScenarioParseError[] {
+  const errors: ScenarioParseError[] = [];
+  visit(doc, {
+    Pair(_, pair) {
+      if (!isCollection(pair.key)) return;
+      const offset = pair.key.range?.[0] ?? 0;
+      const text = source.slice(Math.max(0, offset - 1), source.indexOf("}}", offset) + 2);
+      const template = text.startsWith("{{") ? text : `{${text}`;
+      errors.push({
+        message: `a {{ }} template has to be quoted - write "${template}", not ${template} (unquoted, YAML reads it as a nested mapping)`,
+        path: "",
+        ...offsetToLineCol(source, offset)
+      });
+      return visit.SKIP;
+    }
+  });
+  return errors;
 }
 
 /** Parses + validates scenario.yaml: YAML syntax, then JSON Schema shape, then semantic rules (§7.1). */
@@ -98,6 +171,9 @@ export function parseScenarioYaml(yamlText: string, options: { knownInstances?: 
   // caps expansion. It is not a security boundary: a scenario sits next to a
   // `start` command Twin runs unsandboxed, so whoever can write one can
   // already run code (see SECURITY.md).
+  const templateErrors = unquotedTemplates(doc, yamlText);
+  if (templateErrors.length > 0) return { ok: false, errors: templateErrors };
+
   let data: unknown;
   try {
     data = doc.toJS({ maxAliasCount: MAX_YAML_ALIAS_BUDGET });
@@ -114,8 +190,8 @@ export function parseScenarioYaml(yamlText: string, options: { knownInstances?: 
   }
 
   if (!validateSchema(data)) {
-    const errors = (validateSchema.errors ?? []).map((err) => ({
-      message: formatAjvError(err),
+    const errors = relevantErrors(validateSchema.errors ?? [], data).map((err) => ({
+      message: formatAjvError(err, data),
       path: err.instancePath,
       ...locate(doc, err.instancePath, yamlText)
     }));

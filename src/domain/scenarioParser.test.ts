@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { parseScenarioYaml } from "./scenarioParser.js";
 
@@ -261,5 +261,55 @@ describe("parseScenarioYaml alias expansion", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.scenario.steps).toHaveLength(40);
+  });
+});
+
+/**
+ * Two easy typos, reported by an external audit. Each produced a raw library
+ * warning or a pile of errors from the restart and wait step shapes - neither
+ * of which the user wrote - and neither said to quote the value.
+ */
+describe("parseScenarioYaml: common typos get one error that says what to do", () => {
+  const scenario = (extra: string): string =>
+    `name: x\nversion: 1\nsteps:\n  - id: read\n    kind: request\n${extra}`;
+
+  it("asks for an unquoted {{ }} template to be quoted, without the yaml library's warning", () => {
+    const warn = vi.spyOn(process, "emitWarning").mockImplementation(() => undefined);
+    const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = parseScenarioYaml(scenario("    request: { method: GET, path: {{id}} }\n"));
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]!.message).toContain('write "{{id}}"');
+      expect(result.errors[0]!.line).toBe(6);
+      expect(warn).not.toHaveBeenCalled();
+      expect(consoleWarn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      consoleWarn.mockRestore();
+    }
+  });
+
+  it('says to write 200, not "200", and nothing about other step kinds', () => {
+    const result = parseScenarioYaml(scenario('    request: { method: GET, path: /x }\n    expect: { status: "200" }\n'));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.map((e) => e.message)).toEqual(['/steps/0/expect/status must be a number, not a string - write 200, not "200"']);
+  });
+
+  it("reports only the request shape's own complaint for a request step", () => {
+    const result = parseScenarioYaml(scenario("    request: { method: GET, path: 42 }\n"));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.map((e) => e.message)).toEqual(["/steps/0/request/path must be string"]);
+  });
+
+  it("keeps one clear error when the kind itself is wrong", () => {
+    const result = parseScenarioYaml(`name: x\nversion: 1\nsteps:\n  - id: s\n    kind: requst\n    request: { method: GET, path: /x }\n`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]!.message).toContain("does not match any known step shape");
   });
 });

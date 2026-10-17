@@ -47,4 +47,12 @@ export interface StackProfile {
    * reading one from the environment, and `$PORT`/`%PORT%` isn't portable.
    */
   resolveStartCommand(input: StackDetectionInput): string | undefined;
+  /**
+   * Run per workspace before the detected start command, when nothing else
+   * sets a build. For a start command that compiles first (`go run .`): the
+   * build step isn't bounded by the boot timeout, so a cold compile no longer
+   * eats it - a boot timeout isn't retried, and a first `go run` on a slow
+   * runner took longer than the whole timeout.
+   */
+  defaultBuild?: string;
 }

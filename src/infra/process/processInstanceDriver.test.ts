@@ -332,6 +332,16 @@ describe("ProcessInstanceDriver: an app listening on a port of its own", () => {
     expect(Date.now() - started).toBeLessThan(3 * spec.bootTimeoutMs);
   }, 30_000);
 
+  it("says, when the app printed nothing before timing out, that it was probably still starting", async () => {
+    await writeFile(path.join(source, "s.js"), `setTimeout(() => {}, 120000);`, "utf8");
+    const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });
+
+    const err = await driver.start(ws, spec).catch((e: unknown) => e);
+    expect(TwinError.isTwinError(err) && err.code).toBe("E_BOOT_TIMEOUT");
+    expect((err as TwinError).hint).toContain("printed nothing at all");
+    expect((err as TwinError).hint).toContain("--build");
+  }, 30_000);
+
   it("still retries a crash on boot, which can come out differently", async () => {
     await writeFile(path.join(source, "s.js"), `process.exit(1);`, "utf8");
     const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });

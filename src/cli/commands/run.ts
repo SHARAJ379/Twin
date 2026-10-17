@@ -134,7 +134,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     }
     const scenario = parsed.scenario;
 
-    const build = options.build ?? config?.build;
+    const configuredBuild = options.build ?? config?.build;
     const setup = options.setup ?? config?.setup;
     const healthPath = options.healthPath ?? config?.healthPath ?? DEFAULT_HEALTH_PATH;
     const portEnv = options.portEnv ?? config?.portEnv ?? DEFAULT_PORT_ENV;
@@ -211,10 +211,14 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     }
     let stack: StackProfile;
     let start: string | undefined;
+    let build = configuredBuild;
     try {
       const detected = await detectStack(options.projectDir, options.stack ?? config?.stack);
       stack = detected.profile;
       start = explicitStart ?? detected.startCommand;
+      // Only alongside the start command the stack itself chose: it's that
+      // command's compile step, and says nothing about one the user wrote.
+      if (build === undefined && start === detected.startCommand) build = stack.defaultBuild;
     } catch (err) {
       const unidentifiable =
         TwinError.isTwinError(err) && (err.code === "E_NO_STACK" || err.code === "E_AMBIGUOUS_STACK");
@@ -235,7 +239,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
         }
       );
     }
-    logger.info(`stack: ${stack.displayName}`, { start });
+    logger.info(`stack: ${stack.displayName}`, { start, ...(build !== undefined ? { build } : {}) });
 
     const run = await store.createRun();
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));

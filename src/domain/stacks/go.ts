@@ -116,6 +116,9 @@ export const goStack: StackProfile = {
   displayName: "Go",
   markers: ["go.mod"],
   reads: ["go.mod"],
+  // Compiles into Go's build cache, so `go run .` at boot only has to link.
+  // The binary it leaves lands in the throwaway workspace.
+  defaultBuild: "go build .",
   // Nothing to link: modules live in the shared module cache outside the project.
   linkDirs: [],
   ignoreDirs: ["vendor", "bin"],

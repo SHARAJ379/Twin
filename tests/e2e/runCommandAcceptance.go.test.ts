@@ -1,4 +1,5 @@
-import { rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -55,4 +56,36 @@ describe.skipIf(goMissing)("twin run against a live Go app: broken => FAIL, fixe
     const exitCode = await runCommand({ projectDir: fixedGoDir, env: {}, keepWorkspaces: false, allowRemote: false }, logger);
     expect(exitCode).toBe(0);
   }, 150_000);
+});
+
+/**
+ * Found by CI (windows-latest, Node 20): once a boot timeout stopped being
+ * retried, `go run .` on a cold runner spent the whole 30s timeout compiling,
+ * and the control instance "never became healthy". The Go stack now compiles
+ * in a build step, which the boot timeout doesn't count.
+ */
+describe.skipIf(goMissing)("a Go app whose first compile takes longer than the boot timeout", () => {
+  let gocache: string;
+  const savedGocache = process.env.GOCACHE;
+
+  afterEach(async () => {
+    if (savedGocache === undefined) delete process.env.GOCACHE;
+    else process.env.GOCACHE = savedGocache;
+    await rm(gocache, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(path.join(brokenGoDir, ".twin"), { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  it("still boots, with the compile moved out of the boot timeout", async () => {
+    // An empty build cache: the first compile is a cold one (~10s locally,
+    // longer on a CI runner), well past the 5s given to boot.
+    gocache = await mkdtemp(path.join(os.tmpdir(), "twin-gocache-"));
+    process.env.GOCACHE = gocache;
+
+    const exitCode = await runCommand(
+      { ...baseOptions, bootTimeoutMs: 5_000, projectDir: brokenGoDir, scenarioPath: path.join(brokenGoDir, "scenario.yaml"), env: {} },
+      logger
+    );
+    // Booted and judged - broken-go's real bugs - rather than E_BOOT_TIMEOUT.
+    expect(exitCode).toBe(1);
+  }, 300_000);
 });

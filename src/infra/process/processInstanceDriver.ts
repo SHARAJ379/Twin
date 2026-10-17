@@ -447,7 +447,11 @@ export class ProcessInstanceDriver implements InstanceDriver {
         {
           hint: alreadyDead
             ? `\`${spec.command}\` exited instead of serving. If the app needs compiling first, pass --build "<command>". The log tail below is the app's own output.`
-            : `The app started but never answered ${spec.healthPath} with a non-5xx status. Check --health-path (is it really ${spec.healthPath}?) and --port-env (does the app read ${spec.portEnv}?).`,
+            : `The app started but never answered ${spec.healthPath} with a non-5xx status. Check --health-path (is it really ${spec.healthPath}?) and --port-env (does the app read ${spec.portEnv}?).${
+                logs.lines(1).length === 0
+                  ? " It printed nothing at all, which usually means it was still starting up - compiling, say (`go run`, `ts-node`): move that into --build, which the boot timeout doesn't count, or raise --boot-timeout-ms."
+                  : ""
+              }`,
           details: { instance: ws.instance, logTail: logs.lines(30) },
           cause: err
         }

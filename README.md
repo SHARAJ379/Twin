@@ -163,7 +163,7 @@ between instances, and which source patterns to blame when a check fails.
 | --- | --- | --- | --- |
 | **Node.js** | `package.json` | `npm start` / `npm run dev` / `serve` | `node_modules` |
 | **Python** | `requirements.txt`, `pyproject.toml`, `Pipfile`, `manage.py` | Django `runserver`, `uvicorn`, `flask run`, or the script itself | `.venv` / `venv` |
-| **Go** | `go.mod` | `go run .` | *(nothing - compiled)* |
+| **Go** | `go.mod` | `go run .`, after a `go build .` build step (so compiling doesn't count against the boot timeout) | *(nothing - compiled)* |
 | **Ruby** | `Gemfile`, `config.ru` | `rails server`, `rackup`, or `ruby <script>` | `vendor` |
 | **PHP** | `composer.json`, `artisan`, `index.php` | `artisan serve` or `php -S` | `vendor` |
 
@@ -384,6 +384,7 @@ outright. The common ones:
 | `E_BOOT_CRASH`, log says `Cannot find module .../dist/...` | the app compiles before it runs | `--build "npm run build"` (or set `"build"` in `twin.config.json`) |
 | `E_BOOT_DETACHED` | the start command hands the server off and exits (`pm2 start`, `--daemon`) | run it in the foreground: `pm2-runtime start`, no daemon flag |
 | `E_BOOT_TIMEOUT`, app seems fine on its own | Twin polls `/health`, your app doesn't serve it | `--health-path /healthz` |
+| `E_BOOT_TIMEOUT`, "it printed nothing at all" | the app was still starting, often compiling (`ts-node`, a custom `go run`) | move the compile into `--build`, which the boot timeout doesn't count, or raise `--boot-timeout-ms` |
 | `E_BOOT_TIMEOUT`, "is listening on port N, not on port M" | the app doesn't read `PORT` and picks its own port. Twin reads the port from the app's startup line and gives up after one timeout rather than retrying | make the app read `PORT`, or `--port-env APP_PORT`, or put `{{port}}` in `--start` |
 | `scenario-ran-as-written` error | a step didn't match its own `expect:` | fix the route/status in `scenario.yaml` - the message names the step and what it got |
 | `No checks ran` | nothing in the scenario is tagged `check:` | tag the step that reads state back via the *other* instance |

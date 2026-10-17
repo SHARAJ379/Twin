@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- A Go app's first compile no longer counts against the boot timeout. Once timeouts stopped being
+  retried, `go run .` on a cold machine could spend the whole timeout compiling (CI's Windows
+  runner did). The Go stack now runs `go build .` as a build step before its detected
+  `go run .`, and a timeout whose app printed nothing says it was probably still starting.
 - `twin run` inside any `examples/broken-*` app works with no flags too (exit 1); they had no
   `twin.config.json`, so it stopped at "no scenario given".
 - An unquoted template inside a flow mapping (`request: { path: /items/{{id}} }`) gets the same

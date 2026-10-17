@@ -22,7 +22,8 @@ export interface RunHistory {
  * control run had it and the split run:
  *
  * - has it null, empty or missing instead;
- * - has `false` where the control run had `true` (`{"authenticated": false}`);
+ * - has `false` where the control run had `true`, in a flag that reports the
+ *   scenario's own state (`{"authenticated": false}`, not `{"cached": false}`);
  * - has a different string, where the control run's value was data the
  *   scenario itself established (sent, or received in an earlier step) and
  *   the split run's is something that run never sent or received - a
@@ -67,6 +68,42 @@ interface LostLeaf {
 
 const EMPTY_KINDS = new Set(["null", "empty"]);
 
+/**
+ * Booleans that report whether the scenario's own state is there - a session,
+ * a record, a permission. Only these count as lost when true turns false:
+ * plenty of flags legitimately differ per instance (`cached`, `fromCache`,
+ * `isFirstVisit`), and treating every one as lost data failed a correct app.
+ */
+const STATE_FLAGS = new Set([
+  "authenticated",
+  "isauthenticated",
+  "authorized",
+  "isauthorized",
+  "loggedin",
+  "isloggedin",
+  "signedin",
+  "issignedin",
+  "hassession",
+  "sessionvalid",
+  "valid",
+  "isvalid",
+  "ok",
+  "success",
+  "exists",
+  "found",
+  "owner",
+  "isowner",
+  "ismember",
+  "isadmin",
+  "verified",
+  "isverified"
+]);
+
+function isStateFlag(path: string): boolean {
+  const key = pathKeys(path).at(-1);
+  return key !== undefined && STATE_FLAGS.has(key.toLowerCase().replace(/[_-]/g, ""));
+}
+
 function knownStrings(earlier: StepResult[], self: StepFingerprint): Set<string> {
   const known = new Set(self.sent);
   for (const step of earlier) {
@@ -109,7 +146,7 @@ function lostLeaves(
       reported.add(at);
       continue;
     }
-    if (EMPTY_KINDS.has(s) || (c === "true" && s === "false")) {
+    if (EMPTY_KINDS.has(s) || (c === "true" && s === "false" && isStateFlag(path))) {
       out.push({ path, control: c, split: s, replaced: false });
       continue;
     }

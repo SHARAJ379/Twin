@@ -58,6 +58,21 @@ describe("describeLostData", () => {
     expect(describeLostData(step(200, '{"cached":false}'), step(200, '{"cached":true}'))).toBeUndefined();
   });
 
+  it.each(["isLoggedIn", "logged_in", "hasSession", "valid", "ok", "success", "exists", "found", "isOwner", "authorized"])(
+    "reports the state flag %s turning false",
+    (key) => {
+      expect(describeLostData(step(200, `{"${key}":true}`), step(200, `{"${key}":false}`))).toMatch(
+        new RegExp(String.raw`^\$\.${key} was .* but false across instances$`)
+      );
+    }
+  );
+
+  // Audit, third round: a flag that legitimately differs per instance - a
+  // per-process cache, a first-visit marker - is not lost data.
+  it.each(["cached", "fromCache", "isFirstVisit", "warm", "cacheHit", "isNew"])("ignores %s turning false", (key) => {
+    expect(describeLostData(step(200, `{"${key}":true}`), step(200, `{"${key}":false}`))).toBeUndefined();
+  });
+
   /** Audit, second round: a fallback user isn't null, empty or missing - it's a different value. */
   it("reports a fallback replacing data the scenario established - {user: guest}", () => {
     expect(describeLostData(step(200, '{"user":"alice"}'), step(200, '{"user":"guest"}'), signedUpAsAlice)).toBe(

@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- A boolean that legitimately differs per instance no longer fails a correct app. "True turned
+  false" counts as lost data only for flags that report the scenario's own state
+  (`authenticated`, `isLoggedIn`, `hasSession`, `valid`, `ok`, `success`, `exists`, `found`,
+  `isOwner`...); `cached`, `fromCache` and `isFirstVisit` differing is a per-process cache working.
 - The response-fingerprint salt is per run, not per process, and a test proves it never reaches
   `.twin/` (results, report, logs) or the terminal in any encoding.
 - The safety scan's line for short hostnames is now deliberate and documented (README

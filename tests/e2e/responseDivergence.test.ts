@@ -109,3 +109,76 @@ describe("a split response that passes expect: but lost data", () => {
     expect(exitCode).toBe(1);
   }, 90_000);
 });
+
+/**
+ * Sessions done right - a signed cookie, verified with a secret both
+ * instances share - plus a per-process cache, whose `cached` flag is true on
+ * a single instance (it served the login) and false across instances. That
+ * flag differing is the cache working as designed, not lost data.
+ */
+const SIGNED_SESSION_APP = `
+const http = require("node:http");
+const crypto = require("node:crypto");
+const seen = new Set();
+const sign = (name) => name + "." + crypto.createHmac("sha256", process.env.SESSION_SECRET).update(name).digest("hex");
+http.createServer((req, res) => {
+  const send = (status, body, headers = {}) => { res.writeHead(status, { "content-type": "application/json", ...headers }); res.end(JSON.stringify(body)); };
+  if (req.url === "/health") return send(200, { ok: true });
+  if (req.method === "POST" && req.url === "/login") {
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      const name = JSON.parse(raw).name;
+      seen.add(name);
+      send(200, { ok: true }, { "set-cookie": "sid=" + sign(name) + "; Path=/; HttpOnly" });
+    });
+    return;
+  }
+  if (req.url === "/me") {
+    const sid = (req.headers.cookie || "").split("sid=")[1] || "";
+    const name = sid.slice(0, sid.lastIndexOf("."));
+    if (sid !== sign(name)) return send(401, { user: null });
+    return send(200, { user: name, cached: seen.has(name), fromCache: seen.has(name), isFirstVisit: !seen.has(name) });
+  }
+  send(404, {});
+}).listen(Number(process.env.PORT), "127.0.0.1");
+`;
+
+describe("a flag that legitimately differs per instance", () => {
+  let projectDir: string;
+
+  afterEach(async () => {
+    await rm(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  it("passes an app whose shared state is correct, though `cached` is true on one instance and false across two", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "cached-flag-fixture-"));
+    await writeFile(path.join(projectDir, "package.json"), JSON.stringify({ name: "cached-flag-fixture", private: true }), "utf8");
+    await writeFile(path.join(projectDir, "server.js"), SIGNED_SESSION_APP, "utf8");
+    await writeFile(path.join(projectDir, "scenario.yaml"), SCENARIO, "utf8");
+
+    const exitCode = await runCommand(
+      {
+        projectDir,
+        scenarioPath: path.join(projectDir, "scenario.yaml"),
+        env: { SESSION_SECRET: "placeholder-secret" },
+        start: "node server.js",
+        healthPath: "/health",
+        portEnv: "PORT",
+        bootTimeoutMs: 30_000,
+        keepWorkspaces: false,
+        allowRemote: false
+      },
+      logger
+    );
+
+    const twinDir = path.join(projectDir, ".twin");
+    const latestId = await readFile(path.join(twinDir, "latest"), "utf8");
+    const report = JSON.parse(await readFile(path.join(twinDir, "runs", latestId, "report.json"), "utf8")) as {
+      findings: { checkId: string; status: string; summary: string }[];
+    };
+    const finding = report.findings.find((f) => f.checkId === "session-survives-switch")!;
+    expect(finding.status, finding.summary).toBe("pass");
+    expect(exitCode).toBe(0);
+  }, 90_000);
+});

@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -50,26 +49,11 @@ describe.skipIf(pythonMissing)("twin run against a live Python app: broken => FA
     expect(exitCode).toBe(1);
   }, 150_000);
 
-  it("PASSes all four checks against examples/fixed-python, given shared session secret/data/upload paths", async () => {
+  // As shipped: no flags, no env. Its twin.config.json points every instance
+  // at {{shared}}, the run's stand-in for a shared volume (examples/README.md).
+  it("PASSes all four checks against examples/fixed-python with no extra flags", async () => {
     twinDirsToClean.push(path.join(fixedPythonDir, ".twin"));
-    const sharedDir = await mkdtemp(path.join(os.tmpdir(), "twin-fixed-python-shared-"));
-    // Swept with the .twin dirs: `twin clean` deliberately only removes
-    // Twin's own `twin-<run-id>` workspaces, so a fixture dir left here is
-    // litter nothing else will ever collect.
-    twinDirsToClean.push(sharedDir);
-    const exitCode = await runCommand(
-      {
-        ...baseOptions,
-        projectDir: fixedPythonDir,
-        scenarioPath: path.join(fixedPythonDir, "scenario.yaml"),
-        env: {
-          SESSION_SECRET: "test-secret-123",
-          DATA_FILE: path.join(sharedDir, "data.json"),
-          UPLOAD_DIR: path.join(sharedDir, "uploads")
-        }
-      },
-      logger
-    );
+    const exitCode = await runCommand({ projectDir: fixedPythonDir, env: {}, keepWorkspaces: false, allowRemote: false }, logger);
     expect(exitCode).toBe(0);
   }, 150_000);
 });

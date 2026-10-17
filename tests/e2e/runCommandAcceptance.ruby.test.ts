@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import os from "node:os";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -52,26 +51,11 @@ describe.skipIf(rubyMissing)("twin run against a live Ruby app: broken => FAIL, 
     expect(exitCode).toBe(1);
   }, 150_000);
 
-  it("PASSes all four checks against examples/fixed-ruby, given shared session secret/data/upload paths", async () => {
+  // As shipped: no flags, no env. Its twin.config.json points every instance
+  // at {{shared}}, the run's stand-in for a shared volume (examples/README.md).
+  it("PASSes all four checks against examples/fixed-ruby with no extra flags", async () => {
     twinDirsToClean.push(path.join(fixedRubyDir, ".twin"));
-    const sharedDir = await mkdtemp(path.join(os.tmpdir(), "twin-fixed-ruby-shared-"));
-    // Swept with the .twin dirs: `twin clean` deliberately only removes
-    // Twin's own `twin-<run-id>` workspaces, so a fixture dir left here is
-    // litter nothing else will ever collect.
-    twinDirsToClean.push(sharedDir);
-    const exitCode = await runCommand(
-      {
-        ...baseOptions,
-        projectDir: fixedRubyDir,
-        scenarioPath: path.join(fixedRubyDir, "scenario.yaml"),
-        env: {
-          SESSION_SECRET: "test-secret-123",
-          DATA_FILE: path.join(sharedDir, "data.json"),
-          UPLOAD_DIR: path.join(sharedDir, "uploads")
-        }
-      },
-      logger
-    );
+    const exitCode = await runCommand({ projectDir: fixedRubyDir, env: {}, keepWorkspaces: false, allowRemote: false }, logger);
     expect(exitCode).toBe(0);
   }, 150_000);
 });

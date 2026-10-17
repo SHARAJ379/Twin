@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- `twin run` inside any `examples/fixed-*` app passes with no extra flags. They needed a shared
+  `SESSION_SECRET`, `DATA_FILE` and `UPLOAD_DIR` that only the e2e tests set, so following the
+  README exited 1. Each now has a `twin.config.json` that points them at `{{shared}}`, and
+  `examples/README.md` says what that stands in for.
 - A store that A and B share only because Twin runs them on one machine no longer passes as
   safe. An app keeping its items in `/tmp/twin-demo-items.json`, or at an absolute `DATA_FILE`,
   passed data-consistency and restart-persistence ("safe to run on more than one instance", exit

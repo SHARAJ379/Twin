@@ -1,0 +1,8 @@
+{
+  "scenario": "scenario.yaml",
+  "env": {
+    "SESSION_SECRET": "example-only-not-a-real-secret",
+    "DATA_FILE": "{{shared}}/data.json",
+    "UPLOAD_DIR": "{{shared}}/uploads"
+  }
+}

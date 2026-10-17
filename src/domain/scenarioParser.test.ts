@@ -291,6 +291,32 @@ describe("parseScenarioYaml: common typos get one error that says what to do", (
     }
   });
 
+  // Found by the final verification: inside a flow mapping, a template after
+  // other text is a syntax error, not a nested mapping, and came out as 15
+  // raw "Unexpected flow-map-start" errors running on through later lines.
+  it.each([
+    ["    request: { method: GET, path: /items/{{id}} }\n    expect: { status: 200 }\n", "/items/{{id}}"],
+    ["    request: { method: GET, path: /items/{{id}}/files }\n", "/items/{{id}}/files"]
+  ])("asks for the unquoted template in %j to be quoted, once", (extra, template) => {
+    const result = parseScenarioYaml(scenario(extra));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]!.message).toContain(`write "${template}"`);
+  });
+
+  it("accepts a template after other text in block style, where YAML reads it as plain text", () => {
+    const result = parseScenarioYaml(scenario("    request:\n      method: GET\n      path: /items/{{id}}\n    expect: { status: 200 }\n"));
+    expect(result.ok).toBe(true);
+  });
+
+  it("leaves a syntax error with no template on its line as it is", () => {
+    const result = parseScenarioYaml(scenario('    request: { method: GET, path: "/items/{{id}}" }\n    expect: { status: [200 }\n'));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.message.includes("has to be quoted"))).toBe(false);
+  });
+
   it('says to write 200, not "200", and nothing about other step kinds', () => {
     const result = parseScenarioYaml(scenario('    request: { method: GET, path: /x }\n    expect: { status: "200" }\n'));
     expect(result.ok).toBe(false);

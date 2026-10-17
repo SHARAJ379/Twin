@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- An unquoted template inside a flow mapping (`request: { path: /items/{{id}} }`) gets the same
+  single "has to be quoted" error as `path: {{id}}`. It's a YAML syntax error there, not a nested
+  mapping, and it came out as a dozen raw "Unexpected flow-map-start" errors running on through
+  the following lines.
 - The install instructions work. `npm install -g @sharaj379/twin` is a 404 until a release is
   published, and the README's `@v0.1.0` tag didn't exist; the README now installs from GitHub
   (`npm install -g github:SHARAJ379/Twin`, marked pre-release), which a new `prepare` script

@@ -146,12 +146,48 @@ function unquotedTemplates(doc: Document, source: string): ScenarioParseError[] 
   return errors;
 }
 
+/**
+ * The same typo inside a flow mapping - `request: { path: /items/{{id}} }` -
+ * isn't a nested mapping but a syntax error, and the yaml library reports it
+ * as a dozen "Unexpected flow-map-start" errors running on through the rest
+ * of the file. When a line with a syntax error holds an unquoted template,
+ * that template is the cause: say so once, and drop the cascade.
+ */
+function unquotedTemplatesOnLines(source: string, errorLines: (number | undefined)[]): ScenarioParseError[] {
+  const lines = source.split(/\r?\n/);
+  const errors: ScenarioParseError[] = [];
+  const seen = new Set<number>();
+  for (const line of errorLines) {
+    if (line === undefined || seen.has(line)) continue;
+    seen.add(line);
+    const text = lines[line - 1] ?? "";
+    for (const match of text.matchAll(/[^\s,{}[\]"']*\{\{[^}]*\}\}[^\s,{}[\]"']*/g)) {
+      const before = text.slice(0, match.index);
+      const quoted = (before.split('"').length - 1) % 2 === 1 || (before.split("'").length - 1) % 2 === 1;
+      if (quoted || before.trimEnd().endsWith("#") || before.includes(" #")) continue;
+      errors.push({
+        message: `a {{ }} template has to be quoted - write "${match[0]}", not ${match[0]} (unquoted, YAML reads the { as the start of a mapping)`,
+        path: "",
+        line,
+        column: match.index + 1
+      });
+      break;
+    }
+  }
+  return errors;
+}
+
 /** Parses + validates scenario.yaml: YAML syntax, then JSON Schema shape, then semantic rules (§7.1). */
 export function parseScenarioYaml(yamlText: string, options: { knownInstances?: string[] } = {}): ScenarioParseResult {
   const knownInstances = options.knownInstances ?? ["A", "B"];
   const doc = parseDocument(yamlText);
 
   if (doc.errors.length > 0) {
+    const templates = unquotedTemplatesOnLines(
+      yamlText,
+      doc.errors.map((err) => err.linePos?.[0]?.line)
+    );
+    if (templates.length > 0) return { ok: false, errors: templates };
     return {
       ok: false,
       errors: doc.errors.map((err) => ({

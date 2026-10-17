@@ -17,12 +17,11 @@ const logger = new ConsoleLogger({ level: "error" }); // keep test output focuse
 
 const rubyMissing = runtimeMissing("Ruby", "ruby --version");
 
-// Neither fixture has a Gemfile/config.ru marker (they're plain scripts on
-// stdlib `socket`, with no gem dependencies to install), so the stack is
-// passed explicitly rather than relying on auto-detection here.
+// Neither fixture has a Gemfile/config.ru (they're plain scripts on stdlib
+// `socket`, with no gems to install). No stack or start command is passed:
+// detecting `app.rb` and guessing `ruby app.rb` is part of what's under
+// test - forcing both here is how the examples shipped undetectable.
 const baseOptions: Omit<RunOptions, "projectDir" | "scenarioPath" | "env"> = {
-  stack: "ruby",
-  start: "ruby app.rb",
   healthPath: "/health",
   portEnv: "PORT",
   bootTimeoutMs: 30_000,

@@ -127,6 +127,7 @@ export const rubyStack: StackProfile = {
   id: "ruby",
   displayName: "Ruby",
   markers: ["Gemfile", "config.ru"],
+  fallbackMarkers: ["app.rb", "server.rb", "main.rb"],
   reads: ["Gemfile"],
   linkDirs: ["vendor"],
   ignoreDirs: ["vendor", ".bundle", "tmp", "log"],

@@ -14,8 +14,13 @@ export function stackProfile(id: StackId): StackProfile | undefined {
 
 export const stackIds: readonly string[] = stackProfiles.map((profile) => profile.id);
 
-/** Profiles whose markers are present at the project root. More than one means a polyglot repo. */
+/**
+ * Profiles whose markers are present at the project root, or failing any,
+ * whose fallback markers are. More than one means a polyglot repo.
+ */
 export function matchingStacks(entries: readonly string[]): StackProfile[] {
   const present = new Set(entries);
-  return stackProfiles.filter((profile) => profile.markers.some((marker) => present.has(marker)));
+  const matched = stackProfiles.filter((profile) => profile.markers.some((marker) => present.has(marker)));
+  if (matched.length > 0) return matched;
+  return stackProfiles.filter((profile) => (profile.fallbackMarkers ?? []).some((marker) => present.has(marker)));
 }

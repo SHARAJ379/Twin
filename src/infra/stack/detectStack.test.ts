@@ -138,6 +138,20 @@ describe("detectStack", () => {
       const dir = await project({ Gemfile: 'gem "rails", "~> 7.1"\n' }, ["bin"]);
       expect((await detectStack(dir)).startCommand).toBe("bundle exec rails server -p {{port}} -b 127.0.0.1");
     });
+
+    // examples/broken-ruby and fixed-ruby are exactly this: stdlib only, no
+    // Gemfile, and undetectable until script names counted as a fallback.
+    it("detects a dependency-free script with no Gemfile and runs it directly", async () => {
+      const dir = await project({ "app.rb": 'require "socket"\n' });
+      const { profile, startCommand } = await detectStack(dir);
+      expect(profile.id).toBe("ruby");
+      expect(startCommand).toBe("ruby app.rb");
+    });
+
+    it("doesn't let a stray script make another stack's project ambiguous", async () => {
+      const dir = await project({ "package.json": '{"scripts":{"start":"node server.js"}}', "main.rb": "" });
+      expect((await detectStack(dir)).profile.id).toBe("node");
+    });
   });
 
   describe("php", () => {

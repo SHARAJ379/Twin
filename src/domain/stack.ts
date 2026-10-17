@@ -24,6 +24,13 @@ export interface StackProfile {
   displayName: string;
   /** Any one of these present at the project root identifies this stack. */
   markers: readonly string[];
+  /**
+   * Entrypoint scripts that identify this stack only when no stack's
+   * `markers` matched. A dependency-free Ruby script has no Gemfile, and
+   * `app.rb` alone is unmistakable - but it shouldn't make a Node repo with a
+   * stray Ruby helper ambiguous.
+   */
+  fallbackMarkers?: readonly string[];
   /** Files whose contents resolveStartCommand() needs; read only if present. */
   reads: readonly string[];
   /** Dependency directories symlinked from the source rather than deep-copied, so instances share one install. */

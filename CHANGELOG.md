@@ -9,6 +9,11 @@ shift between minor versions.
 
 ### Fixed
 
+- The safety scan's line for short hostnames is now deliberate and documented (README
+  "Security"). A dotless name is a local container, but one that names a shared environment -
+  `staging-db`, `stg-postgres`, `uat_db`, `preprod`, `prod2-db`, alongside `prod`/`live`/`primary` -
+  is refused, as is a Kubernetes `*.svc.cluster.local` address, which the `.local` (mDNS) rule
+  had let through.
 - The response check compares full responses, and catches the shapes it missed. It compared the
   2KB previews the report keeps, and a truncated preview was skipped, so `{"user": null, ...}`
   passed whenever the body was large. It never compared booleans, so `{"authenticated": false}`

@@ -199,7 +199,9 @@ function isLocalHost(hostname: string): boolean {
     normalized === "0.0.0.0" ||
     normalized === "host.docker.internal" || // the dev machine itself, reached from inside a container
     normalized.endsWith(".localhost") ||
-    normalized.endsWith(".local") ||
+    // mDNS names are this LAN; `*.svc.cluster.local` is a Kubernetes cluster's
+    // own DNS, a real deployment's service, despite the suffix.
+    (normalized.endsWith(".local") && !normalized.endsWith(".cluster.local")) ||
     isReservedName(normalized)
   );
 }
@@ -225,8 +227,14 @@ function stripPort(hostPort: string): string {
   return colon === -1 ? trimmed : trimmed.slice(0, colon);
 }
 
-/** A dotless name that says outright which environment it is. */
-const PRODUCTION_NAME = /(^|[-_])(prod|production|live|primary)([-_]|$)/i;
+/**
+ * A dotless name that says outright it's a shared environment's server:
+ * `prod-db`, `staging-db`, `primary`. Every other dotless name - `db`,
+ * `analytics`, a Kubernetes service or Tailscale short name - counts as a
+ * local container (README "Safety"), because that is what it is in every
+ * docker-compose project, and refusing them refused all of those.
+ */
+const PRODUCTION_NAME = /(^|[-_])(prod|prd|production|live|primary|staging|stage|stg|uat|preprod)([-_]|\d|$)/i;
 
 /** A bare value is only read as a hostname if it couldn't be a database name, a path, or a port. */
 function looksLikeBareHostname(host: string): boolean {

@@ -266,6 +266,29 @@ describe("names that can't be a remote production server", () => {
     expect(scanForRemoteResources({ DATABASE_URL: "postgres://app@10.0.4.12:5432/app" }).map((r) => r.host)).toEqual(["10.0.4.12"]);
   });
 
+  // The deliberate policy (README "Safety"): a short name is a local container
+  // unless it names a shared environment outright.
+  it.each(["staging-db", "db-staging", "stg-postgres", "prod2-db", "uat_db", "preprod", "primary", "live-redis"])(
+    "refuses the dotless shared-environment name %s, bare or in a URL",
+    (host) => {
+      expect(scanForRemoteResources({ DB_HOST: host }).map((r) => r.host)).toEqual([host]);
+      expect(scanForRemoteResources({ DATABASE_URL: `postgres://app@${host}:5432/app` }).map((r) => r.host)).toEqual([host]);
+    }
+  );
+
+  it.each(["db", "postgres", "analytics", "redis-cache", "mongo1", "my-laptop", "livestream"])(
+    "treats the short name %s as a local container",
+    (host) => {
+      expect(scanForRemoteResources({ DATABASE_URL: `postgres://app@${host}:5432/app` })).toEqual([]);
+    }
+  );
+
+  it("refuses a Kubernetes cluster's own service DNS, despite the .local suffix", () => {
+    const host = "postgres.prod.svc.cluster.local";
+    expect(scanForRemoteResources({ DATABASE_URL: `postgres://app@${host}:5432/app` }).map((r) => r.host)).toEqual([host]);
+    expect(scanForRemoteResources({ DATABASE_URL: "postgres://app@printer.local:5432/app" })).toEqual([]);
+  });
+
   it.each(["cluster0.example.net", "db.example.com", "example.org", "db.test", "x.example", "nope.invalid"])(
     "never refuses the reserved name %s",
     (host) => {

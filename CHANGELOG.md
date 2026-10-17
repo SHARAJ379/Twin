@@ -22,6 +22,12 @@ shift between minor versions.
   every Compose project once `docker-compose.yml` was scanned. RFC 2606 names (`example.com`,
   `.test`, `.example`, `.invalid`) are never treated as real servers, and the source scan skips
   tests and fixtures, which hold real-looking connection strings on purpose.
+- A stale lock can no longer lock a project out for good. A live pid isn't a live run: the OS
+  recycles pids, and in a container Twin is often pid 1, so after one killed run every later run
+  found "pid 1" alive and refused. A lock carrying our own pid now counts only if this process
+  holds it, and any other live pid must still look like the Twin run that wrote it. `twin clean`,
+  which the error points to, now clears a lock whose run has died - it reported "nothing to clean
+  up" and left the lock in place.
 - A start command that backgrounds its server (`node server.js &`, a script that does the same)
   works on macOS and Linux: the instance is judged by its process group, which the server stays
   in, not by the launching shell, which exits at once. That shell exiting used to be reported as

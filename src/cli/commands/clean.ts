@@ -2,6 +2,7 @@ import { readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
 import type { Logger } from "../../ports/logger.js";
 import { readPidFile } from "../../infra/process/pidFile.js";
 import { reapOrphans, type ReapResult } from "../../infra/process/reapOrphans.js";
@@ -53,6 +54,17 @@ export async function cleanOrphans(
   const reaped = await reapRecordedProcesses(projectDir, logger);
   if (reaped === undefined) logger.info("no run history for this project (no .twin/runs directory)");
 
+  // The lock's own error points here, so this has to be able to clear it: a
+  // run that was killed leaves its lock behind, and "nothing to clean up"
+  // with the lock still in place left deleting it by hand as the only way out.
+  const lock = await new FsArtifactStore(projectDir).clearStaleLock();
+  if (lock.cleared) logger.info("removed a lock left behind by a run that is no longer running");
+  if (lock.holder !== undefined) {
+    logger.warn(`a Twin run (pid ${lock.holder.pid}) is still in progress and holds the lock; leaving it`, {
+      startedAt: lock.holder.startedAt
+    });
+  }
+
   // Processes first: a workspace can't be removed on Windows while an instance
   // still has its cwd inside it.
   const { stale, recent } = await findOrphanWorkspaces(tmpDir, Date.now());
@@ -78,7 +90,8 @@ export async function cleanOrphans(
     result.reaped.length === 0 &&
     result.skippedPidReuse.length === 0 &&
     result.skippedUnverifiable.length === 0 &&
-    removed.length === 0
+    removed.length === 0 &&
+    !lock.cleared
   ) {
     logger.info("nothing to clean up");
   }

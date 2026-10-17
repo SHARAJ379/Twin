@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
 import type { ArtifactStore, Lock, RunHandle } from "../../ports/artifactStore.js";
+import { getCommandLine } from "../process/getCommandLine.js";
 import { isProcessAlive } from "../process/isProcessAlive.js";
 
 interface LockFileContents {
@@ -13,6 +14,36 @@ interface LockFileContents {
   token: string;
   /** Written by release(): this generation is a tombstone, and the lock is free. */
   released?: boolean;
+  /** The holder's script path, so a pid the OS has since reused for something else isn't mistaken for it. */
+  command?: string;
+}
+
+/** What identifies a Twin process in its own command line: the script it runs. */
+const OWN_COMMAND = process.argv[1] ?? process.execPath;
+
+/** Lock tokens this process holds (or is in the middle of taking). */
+const TOKENS_HELD_HERE = new Set<string>();
+
+/**
+ * Whether a lock is held by a run that is still going.
+ *
+ * A live pid alone isn't that. The OS recycles pids, so a crashed run's pid
+ * can belong to anything by now - and in a container Twin is very often pid 1,
+ * so after one killed run every later run found "pid 1" alive and refused,
+ * forever, with `twin clean` unable to help. Our own pid is decided by the
+ * tokens this process actually holds; any other live pid has to still look
+ * like the process that wrote the lock. A command line the OS won't reveal
+ * counts as a match: refusing wrongly costs a retry, and running alongside a
+ * real peer costs a corrupted `.twin/`.
+ */
+function isHeldByLiveRun(lock: LockFileContents): boolean {
+  if (lock.released === true) return false;
+  if (lock.pid === process.pid) return TOKENS_HELD_HERE.has(lock.token);
+  if (!isProcessAlive(lock.pid)) return false;
+  if (lock.command === undefined) return true;
+  const live = getCommandLine(lock.pid);
+  if (live === undefined) return true;
+  return process.platform === "win32" ? live.toLowerCase().includes(lock.command.toLowerCase()) : live.includes(lock.command);
 }
 
 /** `lock.<generation>` - see acquireLock for why the lock is a series of files, not one. */
@@ -111,12 +142,16 @@ export class FsArtifactStore implements ArtifactStore {
     const contents: LockFileContents = {
       pid: process.pid,
       startedAt: new Date().toISOString(),
-      token: randomUUID()
+      token: randomUUID(),
+      command: OWN_COMMAND
     };
 
     const held = (existing: LockFileContents): TwinError =>
       new TwinError("E_LOCKED", `Another Twin run (pid ${existing.pid}) appears to be in progress in this project.`, {
-        hint: "Wait for it to finish, or run `twin clean` if you're sure it's dead.",
+        hint: `Wait for it to finish. If you're sure no other run is in progress, \`twin clean\` clears a lock whose run has died, and deleting ${path.join(
+          this.root,
+          "lock.*"
+        )} clears any lock.`,
         details: { pid: existing.pid, startedAt: existing.startedAt },
         exitCode: 2
       });
@@ -136,15 +171,21 @@ export class FsArtifactStore implements ArtifactStore {
           // tells them apart, and treating a young one as stale is how this
           // lock once let two runs in.
           if (top.ageMs < UNREADABLE_LOCK_GRACE_MS) throw contended();
-        } else if (!top.contents.released && isProcessAlive(top.contents.pid)) {
+        } else if (isHeldByLiveRun(top.contents)) {
           throw held(top.contents);
         }
       }
 
       const generation = (top?.generation ?? 0) + 1;
       const ours = this.lockPath(generation);
+      // Before the file exists, so a concurrent acquire in this same process
+      // sees our pid with a token we hold, not one it could judge stale.
+      TOKENS_HELD_HERE.add(contents.token);
       // EEXIST: a peer claimed this generation first. Go and look at it.
-      if (!(await this.tryCreateLockFile(ours, contents))) continue;
+      if (!(await this.tryCreateLockFile(ours, contents))) {
+        TOKENS_HELD_HERE.delete(contents.token);
+        continue;
+      }
 
       const now = await this.readTopLock();
       if (now?.generation === generation && now.contents?.token === contents.token) {
@@ -153,10 +194,27 @@ export class FsArtifactStore implements ArtifactStore {
       }
       // A higher generation exists, so ours was never the lock. It is below
       // the top and can never become it again, so it is safe to withdraw.
+      TOKENS_HELD_HERE.delete(contents.token);
       await rm(ours, { force: true });
     }
 
     throw contended();
+  }
+
+  /**
+   * `twin clean`'s half of the lock: removes it when no live run holds it,
+   * judged exactly as acquireLock judges it. Says what it found either way.
+   */
+  async clearStaleLock(): Promise<{ cleared: boolean; holder?: { pid: number; startedAt: string } }> {
+    const top = await this.readTopLock();
+    if (top === undefined) return { cleared: false };
+    if (top.contents !== null && isHeldByLiveRun(top.contents)) {
+      return { cleared: false, holder: { pid: top.contents.pid, startedAt: top.contents.startedAt } };
+    }
+    if (top.contents === null && top.ageMs < UNREADABLE_LOCK_GRACE_MS) return { cleared: false };
+    const generations = await this.lockGenerations();
+    await Promise.all(generations.map((g) => rm(this.lockPath(g), { force: true }).catch(() => undefined)));
+    return { cleared: !(top.contents?.released ?? false) };
   }
 
   private heldLock(generation: number, contents: LockFileContents): Lock {
@@ -165,6 +223,7 @@ export class FsArtifactStore implements ArtifactStore {
       release: async () => {
         if (released) return;
         released = true;
+        TOKENS_HELD_HERE.delete(contents.token);
         const top = await this.readTopLock();
         if (top?.generation !== generation || top.contents?.token !== contents.token) {
           // Someone has since passed us - only possible if we were judged
@@ -290,7 +349,13 @@ export class FsArtifactStore implements ArtifactStore {
       const raw = await readFile(lockPath, "utf8");
       const parsed = JSON.parse(raw) as Partial<LockFileContents>;
       if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.token === "string") {
-        return { pid: parsed.pid, startedAt: parsed.startedAt, token: parsed.token, released: parsed.released === true };
+        return {
+          pid: parsed.pid,
+          startedAt: parsed.startedAt,
+          token: parsed.token,
+          released: parsed.released === true,
+          ...(typeof parsed.command === "string" ? { command: parsed.command } : {})
+        };
       }
       return null;
     } catch {

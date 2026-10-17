@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -208,4 +209,62 @@ describe("FsArtifactStore", () => {
     const remaining = await readdir(runsDir);
     expect(remaining.sort()).toEqual(ids.slice(1)); // oldest dropped, two most recent kept
   });
+});
+
+/**
+ * Found by an external audit: a live pid is not a live run. In a container
+ * Twin is often pid 1, so after one killed run every later run found "pid 1"
+ * alive and refused - forever, since `twin clean` reported nothing to do and
+ * left the lock in place.
+ */
+describe("FsArtifactStore: who really holds a lock", () => {
+  let projectDir: string;
+  const children: ChildProcess[] = [];
+
+  beforeEach(async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-lockholder-"));
+    await mkdir(path.join(projectDir, ".twin"), { recursive: true });
+  });
+
+  afterEach(async () => {
+    for (const child of children.splice(0)) child.kill();
+    await rm(projectDir, { recursive: true, force: true });
+  });
+
+  const writeLock = (contents: object): Promise<void> =>
+    writeFile(path.join(projectDir, ".twin", "lock.1"), JSON.stringify({ startedAt: "x", token: "theirs", ...contents }), "utf8");
+
+  /** A live process whose command line includes `marker`. */
+  const liveProcess = (marker: string): number => {
+    const child = spawn(process.execPath, ["-e", `setTimeout(() => {}, 60000) // ${marker}`], { stdio: "ignore" });
+    children.push(child);
+    return child.pid!;
+  };
+
+  it("reclaims a lock carrying our own pid that this process doesn't hold - the pid-1-in-a-container case", async () => {
+    await writeLock({ pid: process.pid, command: "anything" });
+    await (await new FsArtifactStore(projectDir).acquireLock()).release();
+  });
+
+  it("reclaims a lock whose pid is alive but has been reused by something else", async () => {
+    await writeLock({ pid: liveProcess("unrelated-program"), command: "/opt/twin/dist/cli/index.js" });
+    await (await new FsArtifactStore(projectDir).acquireLock()).release();
+  }, 30_000);
+
+  it("still refuses a lock whose live pid looks like the run that wrote it", async () => {
+    await writeLock({ pid: liveProcess("twin-cli-marker.js"), command: "twin-cli-marker.js" });
+    await expect(new FsArtifactStore(projectDir).acquireLock()).rejects.toMatchObject({ code: "E_LOCKED" });
+  }, 30_000);
+
+  it("lets twin clean clear a dead run's lock, and leaves a live one alone", async () => {
+    await writeLock({ pid: 999_999 });
+    expect(await new FsArtifactStore(projectDir).clearStaleLock()).toEqual({ cleared: true });
+    expect(await lockFiles(projectDir)).toEqual([]);
+
+    await writeLock({ pid: liveProcess("twin-cli-marker.js"), command: "twin-cli-marker.js" });
+    const kept = await new FsArtifactStore(projectDir).clearStaleLock();
+    expect(kept.cleared).toBe(false);
+    expect(kept.holder).toBeDefined();
+    expect(await lockFiles(projectDir)).toEqual(["lock.1"]);
+  }, 30_000);
 });

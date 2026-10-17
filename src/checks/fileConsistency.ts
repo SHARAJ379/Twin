@@ -25,6 +25,6 @@ export const fileConsistencyCheck: Check = {
   explanation:
     "If your app saves uploads to local disk (e.g. multer's default diskStorage), each instance has its own private disk - a file uploaded to one instance simply isn't there on another.",
   evaluate(input: CheckInput) {
-    return evaluateControlGated(input, ID, TITLE, describeFailure);
+    return evaluateControlGated(input, ID, TITLE, describeFailure, { requires: "another-instance" });
   }
 };

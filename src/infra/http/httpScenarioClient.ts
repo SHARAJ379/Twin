@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { evaluateExpectation } from "../../domain/expectation.js";
-import { redactBody, redactHeaders } from "../../domain/redaction.js";
+import { redactBody, redactHeaders, redactUrl } from "../../domain/redaction.js";
+import { defaultRouteForCheck } from "../../domain/relatedSteps.js";
 import { evaluateSaveExpression } from "../../domain/saveExpression.js";
 import type { RequestStep, RestartStep, Scenario, Step, WaitStep } from "../../domain/scenario.js";
 import type { RedactedRequest, RedactedResponse, StepResult } from "../../domain/stepResult.js";
@@ -96,7 +97,10 @@ export class HttpScenarioClient implements ScenarioClient {
     const cookieJar = new CookieJar();
     const helpers = makeTemplateHelpers();
 
-    for (const step of scenario.steps) {
+    const instanceIds = ctx.instances.map((instance) => instance.id);
+    for (const [index, declared] of scenario.steps.entries()) {
+      const via = defaultRouteForCheck(scenario, index, results, instanceIds);
+      const step = via === undefined ? declared : { ...declared, via };
       const result = await this.executeStep(step, ctx, variables, cookieJar, helpers);
       if (result.saved !== undefined) Object.assign(variables, result.saved);
       results.push(result);
@@ -238,7 +242,7 @@ export class HttpScenarioClient implements ScenarioClient {
 
       redactedRequest = {
         method: rendered.method,
-        path: rendered.path,
+        path: redactUrl(rendered.path, ctx.redactExtraHeaders),
         headers: redactHeaders(headers, ctx.redactExtraHeaders),
         bodyPreview: redactBody(typeof body === "string" ? body : undefined, ctx.redactExtraHeaders)
       };

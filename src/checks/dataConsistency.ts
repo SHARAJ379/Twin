@@ -24,6 +24,6 @@ export const dataConsistencyCheck: Check = {
   explanation:
     "If your app keeps application data in a module-level variable or a local SQLite file, each instance has its own copy - a record created on one instance simply doesn't exist on another.",
   evaluate(input: CheckInput) {
-    return evaluateControlGated(input, ID, TITLE, describeFailure);
+    return evaluateControlGated(input, ID, TITLE, describeFailure, { requires: "another-instance" });
   }
 };

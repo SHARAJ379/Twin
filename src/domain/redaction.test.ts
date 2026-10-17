@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { redactBody, redactHeaders, redactValueForMessage } from "./redaction.js";
+import { redactBody, redactHeaders, redactUrl, redactValueForMessage } from "./redaction.js";
 
 describe("redactHeaders", () => {
   it("keeps allowlisted headers verbatim", () => {
@@ -231,7 +231,58 @@ describe("redactValueForMessage", () => {
     expect(redactValueForMessage("0000000000000000000000000000", "$.data.serial")).toBe('"0000000000000000000000000000"');
   });
 
+  /**
+   * Over-redaction has a cost too: a jsonPath mismatch on a record id or a file
+   * path is the evidence the data- and file-consistency checks rest on, and
+   * `expected <redacted>, got <redacted>` can't be diagnosed.
+   */
+  it("leaves record ids, file paths and fields under a plural collection name readable", () => {
+    expect(redactValueForMessage("507f1f77bcf86cd799439011", "$.id")).toBe('"507f1f77bcf86cd799439011"');
+    expect(redactValueForMessage("uploads/twin-test-4f2a1b2c.txt", "$.path")).toBe('"uploads/twin-test-4f2a1b2c.txt"');
+    expect(redactValueForMessage("Alice", "$.keys[0].owner")).toBe('"Alice"');
+    // ...while the collection's own members, and opaque values under it, stay masked
+    expect(redactValueForMessage("x", "$.keys[0]")).toBe("<redacted>");
+    expect(redactValueForMessage("x", "$.tokens")).toBe("<redacted>");
+    expect(redactValueForMessage("a3f1c9d2e4b60718293a4b5c6d7e8f90", "$.keys[0].value")).toBe("<redacted>");
+    expect(redactValueForMessage("x", "$.secrets.current")).toBe("<redacted>");
+  });
+
   it("masks a field name the user declared secret", () => {
     expect(redactValueForMessage("plain-value", "$.data.x_custom", ["X-Custom"])).toBe("<redacted>");
+  });
+});
+
+/**
+ * Found by an external audit reading the code: Location was on the header
+ * allowlist and kept verbatim, the request path was stored raw, and HTML
+ * bodies weren't redacted at all - so magic-link and OAuth logins, a
+ * `/verify?token=` step, and a page's CSRF token all reached results.json.
+ */
+describe("credentials in URLs and HTML", () => {
+  it("masks credentials in a redirect's Location, keeping the path and ordinary params", () => {
+    const out = redactHeaders({ location: "/dashboard?session=abc123&page=2" });
+    expect(out["location"]).toBe("/dashboard?session=<redacted>&page=2");
+    expect(redactHeaders({ location: "https://app.test/cb?code=xyz&state=s1" })["location"]).toBe(
+      "https://app.test/cb?code=<redacted>&state=<redacted>"
+    );
+    expect(redactHeaders({ location: "/cb#access_token=t0k&expires_in=3600" })["location"]).toBe(
+      "/cb#access_token=<redacted>&expires_in=3600"
+    );
+  });
+
+  it("masks a token in a request path, and a password in userinfo", () => {
+    expect(redactUrl("/verify?token=s3cr3t")).toBe("/verify?token=<redacted>");
+    expect(redactUrl("/items?id=7&sort=name")).toBe("/items?id=7&sort=name");
+    expect(redactUrl("https://user:hunter2@host/x")).toBe("https://user:<redacted>@host/x");
+    expect(redactUrl("/files/report.pdf#page=3")).toBe("/files/report.pdf#page=3");
+  });
+
+  it("masks a CSRF token in an HTML hidden field or meta tag, and nothing else", () => {
+    const html =
+      '<form><input type="hidden" name="_csrf" value="abc"><input name="email" value="a@test.com"></form>' +
+      '<meta name="csrf-token" content="def"><input name="csrfmiddlewaretoken" value="ghi">';
+    const out = redactBody(html)!;
+    expect(out).not.toMatch(/abc|def|ghi/);
+    expect(out).toContain('value="a@test.com"');
   });
 });

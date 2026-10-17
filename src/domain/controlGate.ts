@@ -1,5 +1,6 @@
 import { isAuthRejection } from "./authRejection.js";
 import type { CheckInput, Finding } from "./check.js";
+import { describeLostData } from "./responseDivergence.js";
 import type { CheckId } from "./scenario.js";
 
 export interface ControlGateOptions {
@@ -9,6 +10,43 @@ export interface ControlGateOptions {
    * is never marked `blockedBy: "auth"`.
    */
   subjectIsAuthentication?: boolean;
+  /**
+   * What the split run's routing must have done for a pass to mean anything:
+   * the assertion served by a different instance than the write it reads
+   * back, or by an instance restarted since that write.
+   */
+  requires?: "another-instance" | "a-restarted-instance";
+}
+
+/**
+ * Why the split run never put this check's subject to the test, if it didn't.
+ *
+ * Steps without `via:` are round-robined, so a create on A, one unrelated GET
+ * on B and the read-back on A is a perfectly ordinary routing - and a read
+ * from the instance that did the write passes on an app that keeps everything
+ * in memory. That was reported as safe to run on more than one instance when
+ * nothing had crossed an instance at all. Which instance served each step is
+ * recorded, so the claim can be checked rather than assumed.
+ */
+function notExercised(input: CheckInput, requires: NonNullable<ControlGateOptions["requires"]>): string | undefined {
+  const served = input.assertion.instanceServed;
+  // No response through the proxy (a refused connection, a timeout) says
+  // nothing about routing; the gate below judges those on their own terms.
+  if (served === undefined) return undefined;
+  const stepId = input.assertion.stepId;
+
+  if (requires === "a-restarted-instance") {
+    const restarted = input.restartedBetween ?? [];
+    if (restarted.includes(served)) return undefined;
+    if (restarted.length === 0) {
+      return `no instance was restarted between the write and step "${stepId}", so it only shows the data is there without a restart`;
+    }
+    return `step "${stepId}" was served by instance ${served}, which was not the one restarted - pin it with \`via: ${restarted[restarted.length - 1]}\``;
+  }
+
+  const writers = input.related.map((r) => r.instanceServed).filter((id): id is string => id !== undefined);
+  if (writers.length === 0 || writers.some((id) => id !== served)) return undefined;
+  return `step "${stepId}" was served by instance ${served}, the same instance as the write it reads back, so no instance switch happened - pin it with \`via:\` to the other instance`;
 }
 
 /**
@@ -52,6 +90,43 @@ export function evaluateControlGated(
       ],
       suspects: [],
       reason: "control run failed, so a split-run failure can't be attributed to multi-instance behavior (I7)"
+    };
+  }
+
+  const unexercised = options.requires === undefined ? undefined : notExercised(input, options.requires);
+  if (unexercised !== undefined) {
+    return {
+      checkId,
+      status: "error",
+      title,
+      summary: `not tested: ${unexercised}`,
+      evidence: [{ run: "split", stepId: input.assertion.stepId, note: `served by instance ${input.assertion.instanceServed}` }],
+      suspects: [],
+      reason:
+        "the split run's routing never exercised what this check is about, so neither a pass nor a fail says anything about running on more than one instance"
+    };
+  }
+
+  // The scenario's own expect: is a floor, not the whole test: a response
+  // that passes it can still have lost what the single instance returned.
+  const lost = input.assertion.expectationsPassed ? describeLostData(input.control.response, input.assertion.response) : undefined;
+  if (lost !== undefined) {
+    return {
+      checkId,
+      status: "fail",
+      title,
+      // Not describeFailure: those describe a rejected request, and this one
+      // was answered - with less than a single instance answered.
+      summary: `step "${input.assertion.stepId}" passed its own expect:, but lost data across instances - ${lost}`,
+      evidence: [
+        { run: "control", stepId: input.control.stepId, note: "passed on a single instance" },
+        {
+          run: "split",
+          stepId: input.assertion.stepId,
+          note: `passed the scenario's own expect:, but differs from the single-instance response - ${lost}`
+        }
+      ],
+      suspects: []
     };
   }
 

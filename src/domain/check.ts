@@ -1,3 +1,4 @@
+import type { InstanceId } from "./instance.js";
 import type { CheckId } from "./scenario.js";
 import type { StepResult } from "./stepResult.js";
 import type { Suspect } from "./suspect.js";
@@ -39,6 +40,12 @@ export interface CheckInput {
   /** The step tagged `check: <id>` in the split run. */
   assertion: StepResult;
   related: StepResult[];
+  /**
+   * Instances a `restart` step restarted between the related write and this
+   * assertion, in the split run - how restart-persistence knows the read-back
+   * really landed on a restarted instance.
+   */
+  restartedBetween?: InstanceId[];
   /** The same step's result from the control run - a Finding can only be "fail" if this passed (I7). */
   control?: StepResult | undefined;
   workspaceDiffs: WorkspaceDiff[];

@@ -32,7 +32,10 @@ const SECRET_WORDS = new Set([
   "otp",
   "pin",
   "session",
-  "jwt"
+  "jwt",
+  // Anti-forgery tokens: `_csrf` (csurf), `X-XSRF-TOKEN`, a form's hidden field.
+  "csrf",
+  "xsrf"
 ]);
 
 /**
@@ -57,7 +60,10 @@ const SECRET_KEY_SUBSTRINGS = [
   "sessionid",
   "authorization",
   "bearer",
-  "signature"
+  "signature",
+  // Django's `csrfmiddlewaretoken` has no boundary to split on.
+  "csrf",
+  "xsrf"
 ];
 
 /** Lowercased with separators removed, so api_key / API-KEY / apiKey are one thing. */
@@ -128,6 +134,10 @@ export function redactHeaders(
       out[rawKey] = redactCookieRequestHeader(value);
     } else if (SECRET_HEADER_NAMES.has(key) || extra.has(key)) {
       out[rawKey] = "<redacted>";
+    } else if (key === "location") {
+      // A redirect is where a magic link or an OAuth callback hands over its
+      // credential: `/dashboard?session=...`, `/cb?code=...`, `#access_token=...`.
+      out[rawKey] = redactUrl(value, extraRedact);
     } else if (HEADER_ALLOWLIST.has(key)) {
       out[rawKey] = value;
     }
@@ -135,6 +145,72 @@ export function redactHeaders(
   }
 
   return out;
+}
+
+/**
+ * Query and fragment parameters that carry a credential without a secret-
+ * sounding name: an OAuth authorization code, and the `state` bound to it.
+ */
+const URL_SECRET_PARAMS = new Set(["code", "state", "sid", "ticket", "nonce"]);
+
+function redactParams(params: string, extra: ReadonlySet<string>): string {
+  return params
+    .split("&")
+    .map((pair) => {
+      const eqIdx = pair.indexOf("=");
+      if (eqIdx === -1) return pair;
+      const name = pair.slice(0, eqIdx);
+      const decodedName = safeDecode(name);
+      const value = safeDecode(pair.slice(eqIdx + 1));
+      const secret =
+        isSecretKey(decodedName, extra) || URL_SECRET_PARAMS.has(normalizeKey(decodedName)) || looksOpaquelySecret(value);
+      return secret ? `${name}=<redacted>` : pair;
+    })
+    .join("&");
+}
+
+/**
+ * A URL with any credential in it masked: secret-named or token-shaped query
+ * and fragment values, and a password in the userinfo. The path is kept - it
+ * is what the evidence is about - and so are ordinary parameters like
+ * `?page=2`.
+ *
+ * Request paths and `Location` headers both used to be stored raw, so
+ * `/verify?token={{token}}` saved the real token into results.json, and a
+ * magic-link or OAuth redirect saved the session it handed over.
+ */
+export function redactUrl(url: string, extraSecretKeys: readonly string[] = []): string {
+  const extra = new Set(extraSecretKeys.map(normalizeKey).filter((k) => k.length > 0));
+  const hashIdx = url.indexOf("#");
+  const beforeHash = hashIdx === -1 ? url : url.slice(0, hashIdx);
+  const fragment = hashIdx === -1 ? undefined : url.slice(hashIdx + 1);
+  const queryIdx = beforeHash.indexOf("?");
+  // scheme://user:password@host - keep the user, never the password.
+  const base = (queryIdx === -1 ? beforeHash : beforeHash.slice(0, queryIdx)).replace(
+    /^([a-z][a-z0-9+.-]*:\/\/[^/@:]*):[^/@]*@/i,
+    "$1:<redacted>@"
+  );
+  const query = queryIdx === -1 ? undefined : beforeHash.slice(queryIdx + 1);
+
+  return (
+    base +
+    (query === undefined ? "" : `?${redactParams(query, extra)}`) +
+    (fragment === undefined ? "" : `#${fragment.includes("=") ? redactParams(fragment, extra) : fragment}`)
+  );
+}
+
+/**
+ * `<input type="hidden" name="_csrf" value="...">`, `<meta name="csrf-token"
+ * content="...">`: a tag whose name says it holds a secret has its value
+ * masked. Only those attributes, on those two tags - the rest of the page is
+ * evidence a human needs to read.
+ */
+function redactHtml(raw: string, extra: ReadonlySet<string>): string {
+  return raw.replace(/<(?:input|meta)\b[^>]*>/gi, (tag) => {
+    const name = /\b(?:name|id|property)\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1];
+    if (name === undefined || !isSecretKey(name, extra)) return tag;
+    return tag.replace(/\b(value|content)(\s*=\s*)(["'])[^"']*(["'])/gi, "$1$2$3<redacted>$4");
+  });
 }
 
 function maskSecretValues(value: unknown, extra: ReadonlySet<string>): unknown {
@@ -204,6 +280,9 @@ export function redactBody(raw: string | undefined, extraSecretKeys: string[] = 
     // Not JSON. A form body is the other encoding Twin sends, and the one a
     // login almost always uses; anything else is truncated as-is.
     if (FORM_BODY.test(raw)) text = redactFormBody(raw, extra);
+    // HTML is what a server-rendered app answers with, and it carries its
+    // CSRF token in a hidden field or a meta tag.
+    else if (/<[a-z!]/i.test(raw)) text = redactHtml(raw, extra);
   }
 
   return truncate(text);
@@ -257,13 +336,23 @@ const CANONICAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
  * digits - a session id, an API key, a signed blob. Nothing a human reads for
  * meaning looks like this, while a great many secrets do, and a failure
  * message that quotes one publishes it.
+ *
+ * No `.` in the set: it put every file name with an extension in scope
+ * (`uploads/twin-test-4f2a1b2c.txt`), and the dotted credentials - JWTs,
+ * `ya29.`, `SG.` - are caught by their own shapes above.
  */
-const OPAQUE_TOKEN = /^[A-Za-z0-9_\-+/=.]{24,}$/;
+const OPAQUE_TOKEN = /^[A-Za-z0-9_\-+/=]{24,}$/;
+
+/**
+ * Hex shorter than a 128-bit key. A MongoDB ObjectId is 24 hex characters and
+ * a record id, not a credential; hex session ids and keys are 32 and up.
+ */
+const SHORT_HEX_ID = /^[0-9a-f]{1,31}$/i;
 
 function looksOpaquelySecret(value: string): boolean {
   if (CREDENTIAL_PREFIXES.some((prefix) => value.startsWith(prefix))) return true;
   if (JWT_SHAPED.test(value)) return true;
-  if (CANONICAL_UUID.test(value)) return false;
+  if (CANONICAL_UUID.test(value) || SHORT_HEX_ID.test(value)) return false;
   if (!OPAQUE_TOKEN.test(value)) return false;
   // Letters and digits together: "aaaaaaaa..." and "1234567890..." are a test
   // fixture or a serial, not a key.
@@ -306,7 +395,11 @@ export function redactValueForMessage(value: unknown, fieldHint: string, extraSe
   const extra = new Set(extraSecretKeys.map(normalizeKey).filter((k) => k.length > 0));
   const segments = fieldHint.split(/[.[\]]/).filter((part) => part.length > 0 && part !== "$");
 
-  if (segments.some((segment) => pathSegmentNamesSecret(segment, extra))) return "<redacted>";
+  const named = segments.filter((segment) => !/^\d+$/.test(segment));
+  const last = named[named.length - 1];
+
+  if (segments.some((segment) => isSecretKey(segment, extra))) return "<redacted>";
+  if (last !== undefined && pluralNamesSecret(last, extra)) return "<redacted>";
 
   const masked = maskCredentialStrings(maskSecretValues(value, extra));
   // A whole scalar that got masked reads better unquoted: `got <redacted>`,
@@ -318,13 +411,16 @@ export function redactValueForMessage(value: unknown, fieldHint: string, extraSe
 }
 
 /**
- * Slightly keener than isSecretKey, because a path segment is cheaper to
- * over-mask than a body field: a collection is usually named in the plural
- * (`$.tokens[0]`, `$.secrets.current`), and the body-field rules deliberately
- * don't treat `keys` as `key` - `keys_pressed` has to stay readable there.
+ * A collection of secrets is usually named in the plural (`$.tokens[0]`), and
+ * the body-field rules deliberately don't treat `keys` as `key` -
+ * `keys_pressed` has to stay readable there.
+ *
+ * Only for the last named segment, though - the one that says what the value
+ * *is*. Applied to every segment it masked `$.keys[0].owner`, which is "Alice":
+ * plurals like `keys` name ordinary records far too often for everything
+ * under them to be a secret. A singular secret word anywhere still masks.
  */
-function pathSegmentNamesSecret(segment: string, extra: ReadonlySet<string>): boolean {
-  if (isSecretKey(segment, extra)) return true;
+function pluralNamesSecret(segment: string, extra: ReadonlySet<string>): boolean {
   const singular = segment.replace(/s$/i, "");
   return singular.length > 0 && singular !== segment && isSecretKey(singular, extra);
 }

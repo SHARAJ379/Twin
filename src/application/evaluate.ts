@@ -1,6 +1,6 @@
 import type { Check, Finding } from "../domain/check.js";
 import type { DeploymentProfile } from "../domain/deploymentProfile.js";
-import { resolveRelatedSteps } from "../domain/relatedSteps.js";
+import { resolveRelatedSteps, restartedSinceRelated } from "../domain/relatedSteps.js";
 import type { Scenario } from "../domain/scenario.js";
 import type { StepResult } from "../domain/stepResult.js";
 import type { WorkspaceDiff } from "../domain/workspaceDiff.js";
@@ -95,6 +95,7 @@ export function evaluate(input: EvaluateInput): Finding[] {
       check.evaluate({
         assertion,
         related: resolveRelatedSteps(input.scenario, index, input.splitResults),
+        restartedBetween: restartedSinceRelated(input.scenario, index, input.splitResults),
         control: controlById.get(step.id),
         workspaceDiffs: input.workspaceDiffs,
         profile: input.profile

@@ -9,11 +9,56 @@ shift between minor versions.
 
 ### Fixed
 
-- Reclaiming a stale project lock is now an atomic steal rather than a check followed by a
-  delete. Two runs could both judge the same stale lock reclaimable, and the slower delete then
-  landed on the fresh lock the faster run had already taken - leaving two runs each believing
-  they held it, which is the case the previous two attempts at this lock were both meant to
-  rule out. A rename can only succeed once, so exactly one run reclaims it.
+- A check now fails when the split run's response lost data the single instance returned, even
+  if it passed the scenario's own `expect:`. An app keeping sessions in memory, whose logged-out
+  `/me` answers `200 {"user": null}`, passed the README's own scenario (which expects only a
+  200): the control run returned `{"user":"alice"}`, the split run `{"user":null}`, both were in
+  results.json, and Twin said it looked safe. Only a value the control run had and the split run
+  lost counts - a field gone null, empty or missing, an emptied body, a different status - so the
+  ids, timestamps and emails that differ between any two runs never do.
+- The safety preflight catches the production services its name-based matching missed. A value
+  with a datastore scheme (`mongodb+srv://`, `postgres://`, `rediss://`, ...) is checked whatever
+  the variable is called, so `ATLAS_URI` no longer walks past it; `KV_URL`, `CONVEX_URL`,
+  `CLOUDINARY_URL`, Firebase, S3/R2/MinIO and other hosted backends are recognised by name; a
+  bucket, a Firebase project id or `GOOGLE_APPLICATION_CREDENTIALS` is refused unless an
+  emulator or local endpoint is configured; and a dotless host that names production
+  (`DB_HOST=prod-db`) is no longer read as a docker-compose service. Connection strings
+  hardcoded in the source (`mongoose.connect("mongodb+srv://...")`) are scanned too.
+- The third-party warning covers Resend, PayPal, Braintree, Mailchimp, Slack, AWS credentials and
+  more, and only fires on names that carry a credential - so `ANTHROPIC_BASE_URL` no longer
+  triggers it, and the ones that matter aren't lost among the ones that don't.
+- Each run's temp workspace root is created owner-only (0700), and refused if something else is
+  already at that path. Every workspace is a full copy of the project, `.env` included; the root
+  was world-readable, so other users on a shared machine or CI runner could read the app's
+  secrets for as long as `--keep-workspaces` or a crash left them there.
+- Credentials in URLs and HTML are masked in the evidence. `Location` was kept verbatim and
+  request paths raw, so a magic-link or OAuth redirect (`?session=`, `?code=`,
+  `#access_token=`) and a `/verify?token=` step saved the real credential into results.json; a
+  page's CSRF token in a hidden field or meta tag did too.
+- A check no longer passes when its read never left the instance that did the write. Steps
+  without `via:` are round-robined, so create, one unrelated GET, read back routed A, B, A: an
+  app keeping everything in memory passed data-consistency and was called safe to run on more
+  than one instance. The same hole let session-survives-switch pass with both requests on one
+  instance, and restart-persistence pass with the read-back on the instance that wasn't
+  restarted. A tagged check step with no `via:` is now sent where it has to go: the other
+  instance from its write, or the instance restarted since. And every check confirms it from
+  `instanceServed` - if the routing never exercised the check (an explicit `via: any`, or a
+  `via:` naming the wrong instance), the result is "not tested", never a pass.
+- A Ruby app with no Gemfile or config.ru is detected from `app.rb`, `server.rb` or `main.rb`
+  and started with `ruby <script>`. `examples/broken-ruby` and `fixed-ruby` are exactly that,
+  and `twin run` on them failed with `E_NO_STACK`; their end-to-end tests only passed because
+  they forced `--stack ruby --start "ruby app.rb"`, which they no longer do. A script name only
+  counts when no stack's usual markers are present, so it can't make another project ambiguous.
+- Taking over a stale project lock no longer moves or deletes anything. Two runs could both
+  judge the same stale lock reclaimable, and the slower one then removed the fresh lock the
+  faster run had already taken - first with a delete, and then, after the delete was "fixed",
+  with a rename, which is atomic about the move but renames whatever is at the path by then.
+  Either way both runs believed they held the lock. The lock is now a series of files
+  (`.twin/lock.1`, `lock.2`, ...); the holder is the live owner of the highest one, and taking
+  it means exclusively creating the next number, so a claim on a lock judged stale fails if
+  anyone has claimed it since. This also removes the misleading "another twin run is starting
+  at the same moment" error on Windows when antivirus held the stale lock file open: nothing
+  has to remove that file any more.
 - The lock no longer refuses to work on a filesystem without hard links. FAT/exFAT and some
   network and container bind mounts answer `EPERM`/`ENOTSUP`, which was rethrown, so `twin run`
   could not take the lock there and refused to start every time. It falls back to an exclusive
@@ -34,6 +79,11 @@ shift between minor versions.
   failure message too. They were applied to the body preview only, so a field the user had
   explicitly asked to be redacted was masked in one part of the report and printed in full in
   another.
+- Failure messages no longer mask ordinary ids and paths. A MongoDB ObjectId, a file path like
+  `uploads/twin-test-4f2a1b2c.txt`, and anything under a plural like `$.keys[0].owner` all read
+  `<redacted>`, which hid the evidence a data- or file-consistency mismatch exists to show.
+  Hex under 32 characters is treated as an id, `.` no longer counts as a token character, and
+  a plural segment (`tokens`, `keys`) masks only when it is the last named part of the path.
 - `--start ""` is rejected like an empty `"start"` in twin.config.json. The config check added
   for this missed the flag, where an empty string is not "unset": it won the fallback chain,
   suppressed stack detection, and was handed to a shell, which reported itself as the app

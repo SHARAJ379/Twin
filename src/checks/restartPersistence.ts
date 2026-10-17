@@ -27,6 +27,6 @@ export const restartPersistenceCheck: Check = {
   explanation:
     "If your app keeps data only in memory, restarting an instance (a redeploy, a crash, an autoscaler cycling it) wipes it - exactly like running a second instance does, just delayed.",
   evaluate(input: CheckInput) {
-    return evaluateControlGated(input, ID, TITLE, describeFailure);
+    return evaluateControlGated(input, ID, TITLE, describeFailure, { requires: "a-restarted-instance" });
   }
 };

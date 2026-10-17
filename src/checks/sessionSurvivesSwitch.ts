@@ -22,6 +22,6 @@ export const sessionSurvivesSwitchCheck: Check = {
   evaluate(input: CheckInput) {
     // The 401 this check reports is its whole point, so it is never the
     // "blocked short of its subject" case the other three can be.
-    return evaluateControlGated(input, ID, TITLE, describeFailure, { subjectIsAuthentication: true });
+    return evaluateControlGated(input, ID, TITLE, describeFailure, { subjectIsAuthentication: true, requires: "another-instance" });
   }
 };

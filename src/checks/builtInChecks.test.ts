@@ -141,3 +141,72 @@ describe("a check whose request was refused on auth", () => {
     expect(finding.blockedBy).toBeUndefined();
   });
 });
+
+/**
+ * A pass only means something if the routing tested the thing the check is
+ * named after. Create on A, one unrelated GET on B, read on A: that passed as
+ * "safe to run on more than one instance" on an app that keeps everything in
+ * memory, because the read never left the instance that did the write.
+ */
+describe("checks whose routing never exercised their subject", () => {
+  const write = stepResult({ stepId: "create", instanceServed: "A" });
+  const control = stepResult({ expectationsPassed: true });
+
+  it.each([dataConsistencyCheck, fileConsistencyCheck, sessionSurvivesSwitchCheck])(
+    "$id refuses to pass a read served by the instance that did the write",
+    (check) => {
+      const finding = check.evaluate({
+        ...baseInput(stepResult({ stepId: "read", instanceServed: "A" }), control),
+        related: [write]
+      });
+      expect(finding.status).toBe("error");
+      expect(finding.summary).toContain("not tested");
+    }
+  );
+
+  it.each([dataConsistencyCheck, fileConsistencyCheck, sessionSurvivesSwitchCheck])(
+    "$id refuses to fail on one either - a same-instance failure isn't a multi-instance finding",
+    (check) => {
+      const finding = check.evaluate({
+        ...baseInput(stepResult({ stepId: "read", instanceServed: "A", expectationsPassed: false }), control),
+        related: [write]
+      });
+      expect(finding.status).toBe("error");
+    }
+  );
+
+  it("still passes a read served by the other instance", () => {
+    const finding = dataConsistencyCheck.evaluate({
+      ...baseInput(stepResult({ stepId: "read", instanceServed: "B" }), control),
+      related: [write]
+    });
+    expect(finding.status).toBe("pass");
+  });
+
+  it("restart-persistence needs the read-back to land on the instance that was restarted", () => {
+    const read = stepResult({ stepId: "read", instanceServed: "B" });
+    const onUnrestarted = restartPersistenceCheck.evaluate({ ...baseInput(read, control), related: [write], restartedBetween: ["A"] });
+    expect(onUnrestarted.status).toBe("error");
+    expect(onUnrestarted.summary).toContain("via: A");
+
+    const noRestart = restartPersistenceCheck.evaluate({ ...baseInput(read, control), related: [write], restartedBetween: [] });
+    expect(noRestart.status).toBe("error");
+
+    const onRestarted = restartPersistenceCheck.evaluate({ ...baseInput(read, control), related: [write], restartedBetween: ["B"] });
+    expect(onRestarted.status).toBe("pass");
+  });
+});
+
+describe("a split response that passed expect: but lost what the control run returned", () => {
+  it("fails the check instead of passing it", () => {
+    const finding = sessionSurvivesSwitchCheck.evaluate({
+      ...baseInput(
+        stepResult({ stepId: "me", instanceServed: "B", response: { status: 200, headers: {}, bodyPreview: '{"user":null}' } }),
+        stepResult({ stepId: "me", response: { status: 200, headers: {}, bodyPreview: '{"user":"alice"}' } })
+      ),
+      related: [stepResult({ stepId: "login", instanceServed: "A" })]
+    });
+    expect(finding.status).toBe("fail");
+    expect(finding.summary).toContain("$.user");
+  });
+});

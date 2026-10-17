@@ -9,6 +9,8 @@ shift between minor versions.
 
 ### Fixed
 
+- `twin run` inside any `examples/broken-*` app works with no flags too (exit 1); they had no
+  `twin.config.json`, so it stopped at "no scenario given".
 - An unquoted template inside a flow mapping (`request: { path: /items/{{id}} }`) gets the same
   single "has to be quoted" error as `path: {{id}}`. It's a YAML syntax error there, not a nested
   mapping, and it came out as a dozen raw "Unexpected flow-map-start" errors running on through

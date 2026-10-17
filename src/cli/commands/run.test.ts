@@ -279,7 +279,7 @@ describe("runCommand twin.config.json and start-command resolution", () => {
     await writeFile(scenarioPath, "name: x\nversion: 1\nsteps:\n  - id: a\n    kind: wait\n    ms: 1\n", "utf8");
 
     const err = await runCommand(
-      { ...baseOptions, projectDir, scenarioPath, start: 'node -e "process.exit(1)"', bootTimeoutMs: 2000, env: {} },
+      { ...baseOptions, projectDir, scenarioPath, start: 'node -e "process.exit(1)"', bootTimeoutMs: 15_000, env: {} },
       logger
     ).catch((e: unknown) => e);
 
@@ -334,7 +334,7 @@ describe("runCommand twin.config.json and start-command resolution", () => {
 
     // No package.json either, so without the config's scenario path this would fail E_SCENARIO_INVALID/E_NO_STACK instead.
     const err = await runCommand(
-      { ...baseOptions, projectDir, start: 'node -e "process.exit(1)"', bootTimeoutMs: 2000, env: {} },
+      { ...baseOptions, projectDir, start: 'node -e "process.exit(1)"', bootTimeoutMs: 15_000, env: {} },
       logger
     ).catch((e: unknown) => e);
 
@@ -365,7 +365,7 @@ describe("runCommand cleanup", () => {
         start: 'node -e "process.exit(1)"',
         healthPath: "/health",
         portEnv: "PORT",
-        bootTimeoutMs: 2000,
+        bootTimeoutMs: 15_000,
         keepWorkspaces: false,
         allowRemote: false,
         env: {}
@@ -398,7 +398,7 @@ describe("runCommand cleanup", () => {
         start: 'node -e "process.exit(1)"',
         healthPath: "/health",
         portEnv: "PORT",
-        bootTimeoutMs: 2000,
+        bootTimeoutMs: 15_000,
         keepWorkspaces: true,
         allowRemote: false,
         env: {}

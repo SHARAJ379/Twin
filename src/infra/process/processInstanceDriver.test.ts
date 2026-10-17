@@ -93,7 +93,7 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
     const ws = await driver.prepare(workspaceSpec("A"));
     // Generous even under heavy concurrent load (the full suite runs many
     // processes at once): we're testing crash classification, not speed.
-    const crashSpec: StartSpec = { ...startSpec, command: 'node -e "process.exit(1)"', bootTimeoutMs: 3000 };
+    const crashSpec: StartSpec = { ...startSpec, command: 'node -e "process.exit(1)"', bootTimeoutMs: 15_000 };
 
     const err = await driver.start(ws, crashSpec).catch((e: unknown) => e);
     expect(TwinError.isTwinError(err)).toBe(true);
@@ -128,7 +128,7 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
     const noisyCrash: StartSpec = {
       ...startSpec,
       command: `node -e "console.error('TWIN-TEST-MARKER: why it died'); process.exit(1)"`,
-      bootTimeoutMs: 1500
+      bootTimeoutMs: 15_000
     };
 
     const err = await driver.start(ws, noisyCrash).catch((e: unknown) => e);
@@ -144,7 +144,7 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
     const ws = await loggingDriver.prepare(workspaceSpec("A"));
 
     await loggingDriver
-      .start(ws, { ...startSpec, command: `node -e "console.log('TO-FILE-MARKER'); process.exit(1)"`, bootTimeoutMs: 1500 })
+      .start(ws, { ...startSpec, command: `node -e "console.log('TO-FILE-MARKER'); process.exit(1)"`, bootTimeoutMs: 15_000 })
       .catch(() => undefined);
 
     await expect(readFile(path.join(logDir, "A.log"), "utf8")).resolves.toContain("TO-FILE-MARKER");
@@ -194,7 +194,10 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
       const conflictSpec: StartSpec = {
         ...startSpec,
         command: `node -e "require('http').createServer(()=>{}).listen(${takenPort}, '127.0.0.1')"`,
-        bootTimeoutMs: 2000
+        // Room for a cold `node` start on a loaded machine: a boot timeout is
+        // no longer retried, and the poll stops the moment the app dies, so
+        // this only costs time when the crash really is slow.
+        bootTimeoutMs: 15_000
       };
 
       const err = await driver.start(ws, conflictSpec).catch((e: unknown) => e);
@@ -324,7 +327,9 @@ describe("ProcessInstanceDriver: an app listening on a port of its own", () => {
     expect((err as TwinError).message).toContain(`listening on port ${ownPort}`);
     expect((err as TwinError).hint).toContain("--port-env");
     expect(spawned).toHaveBeenCalledTimes(1);
-    expect(Date.now() - started).toBeLessThan(2 * spec.bootTimeoutMs);
+    // Three attempts took at least three boot timeouts; one, plus a cold start
+    // and teardown on a loaded machine, stays under that.
+    expect(Date.now() - started).toBeLessThan(3 * spec.bootTimeoutMs);
   }, 30_000);
 
   it("still retries a crash on boot, which can come out differently", async () => {

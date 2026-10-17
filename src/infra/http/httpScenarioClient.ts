@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { evaluateExpectation } from "../../domain/expectation.js";
 import { redactBody, redactHeaders, redactUrl } from "../../domain/redaction.js";
@@ -10,6 +10,7 @@ import type { RedactedRequest, RedactedResponse, StepResult } from "../../domain
 import { renderTemplateDeep, type TemplateHelpers } from "../../domain/template.js";
 import { PIN_HEADER } from "../proxy/httpProxy.js";
 import { CookieJar } from "./cookieJar.js";
+import { newFingerprintSalt, saltedHash } from "./fingerprintSalt.js";
 import type { RunContext, ScenarioClient } from "../../ports/scenarioClient.js";
 
 /**
@@ -18,15 +19,6 @@ import type { RunContext, ScenarioClient } from "../../ports/scenarioClient.js";
  * text/event-stream) hung `twin run` until CI's own job timeout killed it.
  */
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
-
-/**
- * One salt per Twin process: fingerprints from the control and split runs
- * compare with each other, and with nothing outside this run. Without it, a
- * hashed short password in results.json is a dictionary lookup away.
- */
-const FINGERPRINT_SALT = randomBytes(16);
-const fingerprintHash = (value: string): string =>
-  createHash("sha256").update(FINGERPRINT_SALT).update(value).digest("hex").slice(0, 16);
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -101,6 +93,9 @@ function buildBody(rendered: RequestStep["request"]): { body: string | FormData 
  * deterministic, per TWIN_ARCHITECTURE.md §0.3).
  */
 export class HttpScenarioClient implements ScenarioClient {
+  /** Per client, and one client serves both runs of a `twin run` - see fingerprintSalt.ts. */
+  private readonly fingerprintHash = saltedHash(newFingerprintSalt());
+
   async run(scenario: Scenario, ctx: RunContext): Promise<StepResult[]> {
     const results: StepResult[] = [];
     const variables: Record<string, string> = {};
@@ -330,7 +325,7 @@ export class HttpScenarioClient implements ScenarioClient {
       expectationsPassed: expectationResult.failures.length === 0,
       failedExpectations: expectationResult.failures,
       ...(Object.keys(saved).length > 0 ? { saved } : {}),
-      fingerprint: fingerprintStep({ path: renderedPath, body: sentBody }, responseText, fingerprintHash)
+      fingerprint: fingerprintStep({ path: renderedPath, body: sentBody }, responseText, this.fingerprintHash)
     };
   }
 }

@@ -9,6 +9,8 @@ shift between minor versions.
 
 ### Fixed
 
+- The response-fingerprint salt is per run, not per process, and a test proves it never reaches
+  `.twin/` (results, report, logs) or the terminal in any encoding.
 - The safety scan's line for short hostnames is now deliberate and documented (README
   "Security"). A dotless name is a local container, but one that names a shared environment -
   `staging-db`, `stg-postgres`, `uat_db`, `preprod`, `prod2-db`, alongside `prod`/`live`/`primary` -

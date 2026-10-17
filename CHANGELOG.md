@@ -9,6 +9,14 @@ shift between minor versions.
 
 ### Fixed
 
+- The install instructions work. `npm install -g @sharaj379/twin` is a 404 until a release is
+  published, and the README's `@v0.1.0` tag didn't exist; the README now installs from GitHub
+  (`npm install -g github:SHARAJ379/Twin`, marked pre-release), which a new `prepare` script
+  builds on install.
+- The GitHub Action no longer forces Node 20 onto the job (it uses the Node on PATH, or the new
+  `node-version` input), and installs the project's own dependencies first (new `install` input,
+  `auto` by default). Without them, a Node app following the README's snippet ended in
+  `E_BOOT_CRASH`. A new CI job runs the Action against the fixed and broken examples.
 - `twin run` inside any `examples/fixed-*` app passes with no extra flags. They needed a shared
   `SESSION_SECRET`, `DATA_FILE` and `UPLOAD_DIR` that only the e2e tests set, so following the
   README exited 1. Each now has a `twin.config.json` that points them at `{{shared}}`, and

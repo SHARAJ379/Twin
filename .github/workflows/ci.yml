@@ -48,6 +48,40 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  # The GitHub Action as a user runs it: their own Node already set up, no
+  # dependencies installed. It used to force Node 20 onto the job and never
+  # install the project's dependencies, so the README snippet ended in
+  # E_BOOT_CRASH for any Node app.
+  action:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - id: fixed
+        uses: ./
+        with:
+          project-dir: examples/fixed-express
+      - id: broken
+        uses: ./
+        with:
+          project-dir: examples/broken-express
+          fail-on-finding: "false"
+      - name: Check the Action passed fixed, failed broken, and left the job's Node alone
+        shell: bash
+        env:
+          FIXED: ${{ steps.fixed.outputs.exit-code }}
+          BROKEN: ${{ steps.broken.outputs.exit-code }}
+        run: |
+          set -u
+          node --version | grep -q '^v22\.' || { echo "the Action changed Node to $(node --version)"; exit 1; }
+          [ "$FIXED" = "0" ] || { echo "fixed-express exited $FIXED, wanted 0"; exit 1; }
+          [ "$BROKEN" = "1" ] || { echo "broken-express exited $BROKEN, wanted 1"; exit 1; }
+
   # A green suite says nothing about publishability: it runs against the
   # working tree, with devDependencies present. This packs the tarball,
   # installs it into a clean project, and drives the installed binary - the

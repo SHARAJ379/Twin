@@ -18,13 +18,18 @@ Python, Go, Ruby and PHP** are all supported, detected automatically.
 
 ## Install
 
+> **Pre-release.** Twin isn't published to npm yet, so `npm install -g @sharaj379/twin`
+> returns a 404 for now. Install it straight from GitHub instead. npm builds it on
+> install, which takes a minute.
+
 ```bash
-npm install -g @sharaj379/twin
+npm install -g github:SHARAJ379/Twin
 twin doctor   # checks your machine can run it
 ```
 
-The package is scoped but the command isn't - it's `twin` once installed. To
-run it without installing: `npx @sharaj379/twin run`. Requires Node.js >= 20.
+That installs whatever `master` is at the time. Requires Node.js >= 20. Once a
+release is published, `npm install -g @sharaj379/twin` will work as well. The
+package is scoped but the command isn't: it's `twin` either way.
 
 Working on Twin itself is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -350,13 +355,24 @@ checked-out repo and exposes the report as a step output:
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: SHARAJ379/Twin@v0.1.0
+- uses: actions/setup-node@v4      # the Node your app runs on (Twin needs >= 20)
+  with:
+    node-version: 22
+- uses: SHARAJ379/Twin@<commit-sha>
   with:
     project-dir: .
+    # install: auto               # the default: npm ci / pip / bundle / composer / go mod download
 ```
 
-Pin a tag, not `@master` - the branch moves, and a CI job that silently
-changes behavior is worse than one that needs a version bump.
+The Action installs your project's dependencies itself (`install: auto` picks
+from your lockfile or manifest). Use `install: none` if an earlier step already
+did, or give it your own command. It runs on the Node already on PATH and
+leaves it alone. Only set `node-version` if the runner has none. The `setup`,
+`start` and `build` inputs mirror the CLI flags.
+
+There's no release tag yet, so pin a full commit SHA rather than `@master`. The
+branch moves, and a CI job that silently changes behavior is worse than one that
+needs a bump. Once `v0.1.0` exists, `@v0.1.0` works too.
 
 ## Troubleshooting
 

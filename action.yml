@@ -19,6 +19,9 @@ inputs:
   build:
     description: "Build command to run once per instance workspace before start."
     required: false
+  setup:
+    description: 'Command run in the project before each phase, e.g. a throwaway database''s reset. Defaults to twin.config.json''s "setup".'
+    required: false
   health-path:
     description: "Path polled for readiness."
     required: false
@@ -39,10 +42,25 @@ inputs:
     description: "Fail the job when Twin finds a real multi-instance bug (exit code 1), not just when Twin itself errors (exit code 2)."
     required: false
     default: "true"
+  node-version:
+    description: >-
+      Node.js version to set up before running. Empty (the default) uses the Node already on PATH, so the
+      version your app runs on is the one your workflow chose - Twin needs >= 20. Set it only if the
+      runner has no suitable Node, and note it changes Node for later steps (and your app) too.
+    required: false
+    default: ""
+  install:
+    description: >-
+      How to install the project's own dependencies before running it. "auto" (the default) picks from
+      the lockfile/manifest: npm ci / yarn / pnpm, pip into .venv from requirements.txt, bundle install,
+      composer install, go mod download. "none" skips it (you installed them in an earlier step).
+      Anything else is run as a shell command in project-dir.
+    required: false
+    default: "auto"
 
 outputs:
   exit-code:
-    description: "Twin's own exit code: 0 safe, 1 found a bug, 2 Twin itself errored."
+    description: "Twin's own exit code: 0 safe, 1 found a bug, 2 Twin couldn't tell (including Twin's own errors)."
     value: ${{ steps.run.outputs.exit-code }}
   report-dir:
     description: "Path to the run's .twin/runs/<id> artifact directory (report.json, report.md), relative to project-dir."
@@ -51,17 +69,65 @@ outputs:
 runs:
   using: "composite"
   steps:
+    # Only when asked: setting up Node here used to force Node 20 onto the
+    # rest of the job, the user's app included, whatever version they test on.
     - name: Set up Node.js
+      if: inputs.node-version != ''
       uses: actions/setup-node@v7
       with:
-        node-version: "20"
+        node-version: ${{ inputs.node-version }}
+
+    - name: Check Node.js
+      shell: bash
+      run: |
+        set -u
+        if ! command -v node >/dev/null 2>&1; then
+          echo "::error::Twin needs Node.js >= 20 on PATH. Add actions/setup-node before this step, or set the node-version input."
+          exit 2
+        fi
+        major="$(node -p 'process.versions.node.split(".")[0]')"
+        if [ "$major" -lt 20 ]; then
+          echo "::error::Twin needs Node.js >= 20, and the Node on PATH is $(node --version). Set up a newer one, or set the node-version input."
+          exit 2
+        fi
 
     - name: Build Twin
       shell: bash
       working-directory: ${{ github.action_path }}
       run: |
-        npm ci
+        npm ci --ignore-scripts
         npm run build
+
+    # Without this, a Node project following the README's snippet had no
+    # node_modules, and every run ended in E_BOOT_CRASH.
+    - name: Install the project's dependencies
+      shell: bash
+      working-directory: ${{ inputs.project-dir }}
+      env:
+        TWIN_INSTALL: ${{ inputs.install }}
+      run: |
+        set -euo pipefail
+        case "$TWIN_INSTALL" in
+          none|"")
+            echo "install: none" ;;
+          auto)
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci
+            elif [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile
+            elif [ -f yarn.lock ]; then corepack enable && yarn install --frozen-lockfile
+            elif [ -f package.json ]; then npm install
+            elif [ -f requirements.txt ]; then
+              # Into .venv, which is where Twin's Python stack looks for it.
+              python -m venv .venv
+              py=.venv/bin/python; [ -x "$py" ] || py=.venv/Scripts/python.exe
+              "$py" -m pip install -r requirements.txt
+            elif [ -f Gemfile ]; then bundle install
+            elif [ -f composer.json ]; then composer install --no-interaction --no-progress
+            elif [ -f go.mod ]; then go mod download
+            else echo "install: nothing to install (no lockfile or manifest found)"
+            fi ;;
+          *)
+            bash -c "$TWIN_INSTALL" ;;
+        esac
 
     - name: Run Twin
       id: run
@@ -76,6 +142,7 @@ runs:
         TWIN_SCENARIO: ${{ inputs.scenario }}
         TWIN_START: ${{ inputs.start }}
         TWIN_BUILD: ${{ inputs.build }}
+        TWIN_SETUP: ${{ inputs.setup }}
         TWIN_HEALTH_PATH: ${{ inputs.health-path }}
         TWIN_PORT_ENV: ${{ inputs.port-env }}
         TWIN_BOOT_TIMEOUT_MS: ${{ inputs.boot-timeout-ms }}
@@ -89,6 +156,7 @@ runs:
         [ -n "$TWIN_SCENARIO" ] && ARGS+=(--scenario "$TWIN_SCENARIO")
         [ -n "$TWIN_START" ] && ARGS+=(--start "$TWIN_START")
         [ -n "$TWIN_BUILD" ] && ARGS+=(--build "$TWIN_BUILD")
+        [ -n "$TWIN_SETUP" ] && ARGS+=(--setup "$TWIN_SETUP")
         [ -n "$TWIN_HEALTH_PATH" ] && ARGS+=(--health-path "$TWIN_HEALTH_PATH")
         [ -n "$TWIN_PORT_ENV" ] && ARGS+=(--port-env "$TWIN_PORT_ENV")
         [ -n "$TWIN_BOOT_TIMEOUT_MS" ] && ARGS+=(--boot-timeout-ms "$TWIN_BOOT_TIMEOUT_MS")

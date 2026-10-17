@@ -28,7 +28,11 @@ const IGNORED_DIRS = new Set([
   "fixtures"
 ]);
 
-/** `config.test.js`, `db.spec.ts`, `store_test.go`, `test_db.py`. */
+/**
+ * Test code: `db.test.js`, `db.spec.ts`, `store_test.go`, `test_db.py`. Only
+ * ever matched against code, never config - `config/database.test.yml` is
+ * what an app loads at runtime, and is scanned like any other config.
+ */
 const TEST_FILE = /\.(test|spec)\.[^.]+$|_test\.go$|^test_.*\.py$|_spec\.rb$/;
 
 /** A minified bundle or a data dump is not where anyone writes `mongoose.connect(...)`. */
@@ -45,7 +49,8 @@ export async function loadSourceFilesForSafetyScan(
   projectDir: string,
   extensions: readonly string[]
 ): Promise<{ path: string; content: string }[]> {
-  const wanted = new Set([...extensions, ".json", ".yaml", ".yml", ".toml"]);
+  const config = new Set([".json", ".yaml", ".yml", ".toml"]);
+  const wanted = new Set([...extensions, ...config]);
   const out: { path: string; content: string }[] = [];
 
   const walk = async (dir: string): Promise<void> => {
@@ -61,7 +66,9 @@ export async function loadSourceFilesForSafetyScan(
         if (!IGNORED_DIRS.has(entry.name)) await walk(fullPath);
         continue;
       }
-      if (!entry.isFile() || !wanted.has(path.extname(entry.name)) || TEST_FILE.test(entry.name)) continue;
+      const ext = path.extname(entry.name);
+      if (!entry.isFile() || !wanted.has(ext)) continue;
+      if (!config.has(ext) && TEST_FILE.test(entry.name)) continue;
       if (entry.name === "package-lock.json") continue;
       try {
         if ((await stat(fullPath)).size > MAX_FILE_BYTES) continue;

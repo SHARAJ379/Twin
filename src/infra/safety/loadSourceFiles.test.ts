@@ -23,8 +23,19 @@ describe("loadSourceFilesForSafetyScan", () => {
       "server.js": "",
       "docker-compose.yml": "",
       "config/default.json": "",
+      // runtime config named after an environment, not tests
+      "config/test.js": "",
+      "config/database.test.yml": "",
+      "config/settings.spec.json": "",
       "test/config.js": "",
+      "tests/db.py": "",
+      "spec/models/user_spec.rb": "",
+      "src/__tests__/db.ts": "",
+      "e2e/login.ts": "",
+      "fixtures/db.json": "",
       "src/db.test.ts": "",
+      "src/db.spec.js": "",
+      "lib/user_spec.rb": "",
       "app/store_test.go": "",
       "test_db.py": "",
       "node_modules/pg/index.js": ""
@@ -34,7 +45,14 @@ describe("loadSourceFilesForSafetyScan", () => {
       await writeFile(path.join(dir, name), content);
     }
 
-    const read = (await loadSourceFilesForSafetyScan(dir, [".js", ".ts", ".go", ".py"])).map((f) => f.path.split(path.sep).join("/"));
-    expect(read.sort()).toEqual(["config/default.json", "docker-compose.yml", "server.js"]);
+    const read = (await loadSourceFilesForSafetyScan(dir, [".js", ".ts", ".go", ".py", ".rb"])).map((f) => f.path.split(path.sep).join("/"));
+    expect(read.sort()).toEqual([
+      "config/database.test.yml",
+      "config/default.json",
+      "config/settings.spec.json",
+      "config/test.js",
+      "docker-compose.yml",
+      "server.js"
+    ]);
   });
 });

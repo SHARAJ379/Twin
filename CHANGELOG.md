@@ -9,6 +9,9 @@ shift between minor versions.
 
 ### Fixed
 
+- The source scan reads config files named after an environment (`config/database.test.yml`,
+  `settings.spec.json`): only test *code* is skipped by name, as are the test, tests, spec,
+  `__tests__`, e2e and fixtures directories.
 - A lock whose holder can't be identified is never a permanent lockout. When the holder's pid is
   alive but the OS won't show its command line (common on Windows), `E_LOCKED` says Twin couldn't
   confirm it's a Twin run and names `twin clean --unlock`, a new flag that removes the lock

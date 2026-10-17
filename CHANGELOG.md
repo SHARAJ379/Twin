@@ -28,6 +28,8 @@ shift between minor versions.
   holds it, and any other live pid must still look like the Twin run that wrote it. `twin clean`,
   which the error points to, now clears a lock whose run has died - it reported "nothing to clean
   up" and left the lock in place.
+- Tokens that are part of a URL path (`/reset/<token>`, `/verify/<code>`) are masked in the
+  evidence, as query-string tokens already were.
 - A start command that backgrounds its server (`node server.js &`, a script that does the same)
   works on macOS and Linux: the instance is judged by its process group, which the server stays
   in, not by the launching shell, which exits at once. That shell exiting used to be reported as

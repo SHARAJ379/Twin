@@ -277,6 +277,16 @@ describe("credentials in URLs and HTML", () => {
     expect(redactUrl("/files/report.pdf#page=3")).toBe("/files/report.pdf#page=3");
   });
 
+  it("masks a token that is part of the path, keeping ordinary segments and record ids", () => {
+    expect(redactUrl("/reset/s3cr3t-reset-code")).toBe("/reset/<redacted>");
+    expect(redactUrl("/verify/123456?next=/home")).toBe("/verify/<redacted>?next=/home");
+    expect(redactUrl("/files/a3f1c9d2e4b60718293a4b5c6d7e8f90/download")).toBe("/files/<redacted>/download");
+    expect(redactUrl("https://app.test/magic/abc/x")).toBe("https://app.test/magic/<redacted>/x");
+    expect(redactUrl("/items/3f8b2c5a-1d4e-4f6a-9b8c-7d2e1f0a5b3c")).toBe("/items/3f8b2c5a-1d4e-4f6a-9b8c-7d2e1f0a5b3c");
+    expect(redactUrl("/users/507f1f77bcf86cd799439011/posts/42")).toBe("/users/507f1f77bcf86cd799439011/posts/42");
+    expect(redactUrl("/uploads/twin-test-4f2a1b2c.txt")).toBe("/uploads/twin-test-4f2a1b2c.txt");
+  });
+
   it("masks a CSRF token in an HTML hidden field or meta tag, and nothing else", () => {
     const html =
       '<form><input type="hidden" name="_csrf" value="abc"><input name="email" value="a@test.com"></form>' +

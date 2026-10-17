@@ -170,6 +170,54 @@ function redactParams(params: string, extra: ReadonlySet<string>): string {
 }
 
 /**
+ * Path words after which the next segment is the credential itself:
+ * `/reset/<token>`, `/verify/<code>`, `/magic/<link-id>`, `/invite/<code>`.
+ */
+const CREDENTIAL_PATH_WORDS = new Set([
+  "token",
+  "tokens",
+  "reset",
+  "reset-password",
+  "password-reset",
+  "verify",
+  "verification",
+  "confirm",
+  "confirmation",
+  "activate",
+  "magic",
+  "magic-link",
+  "invite",
+  "invitation",
+  "otp",
+  "unsubscribe",
+  "session",
+  "sessions"
+]);
+
+/**
+ * Query strings were already masked, but a token can be the path itself:
+ * `/reset/<token>` and `/verify/<token>` were saved into results.json
+ * verbatim. A segment is masked when it's shaped like a credential, or when
+ * the segment before it says that's what comes next. Record ids stay
+ * readable - UUIDs and short hex ids aren't token-shaped, and they rarely
+ * follow one of those words.
+ */
+function redactPathSegments(base: string): string {
+  const schemeEnd = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i.exec(base)?.[0] ?? "";
+  const segments = base.slice(schemeEnd.length).split("/");
+  return (
+    schemeEnd +
+    segments
+      .map((segment, i) => {
+        if (segment.length === 0) return segment;
+        const previous = (segments[i - 1] ?? "").toLowerCase();
+        return CREDENTIAL_PATH_WORDS.has(previous) || looksOpaquelySecret(safeDecode(segment)) ? "<redacted>" : segment;
+      })
+      .join("/")
+  );
+}
+
+/**
  * A URL with any credential in it masked: secret-named or token-shaped query
  * and fragment values, and a password in the userinfo. The path is kept - it
  * is what the evidence is about - and so are ordinary parameters like
@@ -193,7 +241,7 @@ export function redactUrl(url: string, extraSecretKeys: readonly string[] = []):
   const query = queryIdx === -1 ? undefined : beforeHash.slice(queryIdx + 1);
 
   return (
-    base +
+    redactPathSegments(base) +
     (query === undefined ? "" : `?${redactParams(query, extra)}`) +
     (fragment === undefined ? "" : `#${fragment.includes("=") ? redactParams(fragment, extra) : fragment}`)
   );

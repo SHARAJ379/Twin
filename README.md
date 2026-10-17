@@ -347,6 +347,7 @@ outright. The common ones:
 | symptom | cause | fix |
 | --- | --- | --- |
 | `E_BOOT_CRASH`, log says `Cannot find module .../dist/...` | the app compiles before it runs | `--build "npm run build"` (or set `"build"` in `twin.config.json`) |
+| `E_BOOT_DETACHED` | the start command hands the server off and exits (`pm2 start`, `--daemon`) | run it in the foreground: `pm2-runtime start`, no daemon flag |
 | `E_BOOT_TIMEOUT`, app seems fine on its own | Twin polls `/health`, your app doesn't serve it | `--health-path /healthz` |
 | `E_BOOT_TIMEOUT`, app logs that it started on the wrong port | the app doesn't read `PORT` | `--port-env APP_PORT` |
 | `scenario-ran-as-written` error | a step didn't match its own `expect:` | fix the route/status in `scenario.yaml` - the message names the step and what it got |

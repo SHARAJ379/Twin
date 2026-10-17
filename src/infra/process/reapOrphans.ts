@@ -1,6 +1,6 @@
 import type { Logger } from "../../ports/logger.js";
 import { getCommandLine } from "./getCommandLine.js";
-import { isProcessAlive } from "./isProcessAlive.js";
+import { isInstanceAlive, isProcessAlive } from "./isProcessAlive.js";
 import { killTree } from "./killTree.js";
 import type { PidRecord } from "./pidFile.js";
 
@@ -37,7 +37,16 @@ export async function reapOrphans(records: PidRecord[], logger: Logger): Promise
 
   for (const record of records) {
     if (!isProcessAlive(record.pid)) {
-      result.alreadyDead.push(record);
+      // The leader is gone, but a backgrounded server it launched can still
+      // be running in its process group. Signalling the group needs no
+      // command-line check: a group id isn't recycled while it has members,
+      // so `-pid` reaches what Twin spawned or nothing at all.
+      if (isInstanceAlive(record.pid)) {
+        await killTree(record.pid, { mode: "crash", graceMs: 0 });
+        result.reaped.push(record);
+      } else {
+        result.alreadyDead.push(record);
+      }
       continue;
     }
 

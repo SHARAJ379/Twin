@@ -11,6 +11,7 @@ export type TwinErrorCode =
   | "E_WORKSPACE_LINK_FAILED"
   | "E_BOOT_TIMEOUT"
   | "E_BOOT_CRASH"
+  | "E_BOOT_DETACHED"
   | "E_CONTROL_FAILED"
   | "E_STEP_TIMEOUT"
   | "E_PROXY"

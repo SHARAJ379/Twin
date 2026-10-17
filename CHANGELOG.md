@@ -9,6 +9,16 @@ shift between minor versions.
 
 ### Fixed
 
+- A start command that backgrounds its server (`node server.js &`, a script that does the same)
+  works on macOS and Linux: the instance is judged by its process group, which the server stays
+  in, not by the launching shell, which exits at once. That shell exiting used to be reported as
+  a crash ("exit code 0") three times over; the group wasn't killed because its leader was
+  "already dead", its pid record was dropped so `twin clean` couldn't find it, and the orphaned
+  servers held Twin's stdout/stderr pipes - so Twin never exited, and a CI job hung until the
+  runner's timeout. A command that hands its server to something outside Twin entirely
+  (`pm2 start`, a `--daemon` flag) now fails once with `E_BOOT_DETACHED`, saying to run it in the
+  foreground, and is not retried; Twin releases the pipes either way, and `twin clean` reaps a
+  process group whose leader has exited.
 - A check now fails when the split run's response lost data the single instance returned, even
   if it passed the scenario's own `expect:`. An app keeping sessions in memory, whose logged-out
   `/me` answers `200 {"user": null}`, passed the README's own scenario (which expects only a

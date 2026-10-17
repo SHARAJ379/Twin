@@ -17,7 +17,7 @@ import type {
 } from "../../ports/instanceDriver.js";
 import type { Logger } from "../../ports/logger.js";
 import type { WorkspaceManager } from "../../ports/workspaceManager.js";
-import { isProcessAlive } from "./isProcessAlive.js";
+import { isInstanceAlive } from "./isProcessAlive.js";
 import { killTree } from "./killTree.js";
 import { LogRingBuffer } from "./logRingBuffer.js";
 import { createLogSink, type LogSink } from "./logSink.js";
@@ -176,6 +176,9 @@ export class ProcessInstanceDriver implements InstanceDriver {
         return await this.spawnOnce(ws, spec);
       } catch (err) {
         lastErr = err;
+        // A start command that hands its server off and exits does it every
+        // time. Retrying only spawned another server that escaped too.
+        if (TwinError.isTwinError(err) && err.code === "E_BOOT_DETACHED") break;
         this.logger.warn(`boot attempt ${attempt}/${MAX_BOOT_ATTEMPTS} for ${ws.instance} failed`, {
           error: err instanceof Error ? err.message : String(err)
         });
@@ -314,12 +317,24 @@ export class ProcessInstanceDriver implements InstanceDriver {
       });
     }
 
-    let exited = false;
+    let exitCode: number | null | undefined;
     let exitInfo = "";
     child.once("exit", (code, signal) => {
-      exited = true;
+      exitCode = code;
       exitInfo = `exit code ${code ?? "null"}, signal ${signal ?? "null"}`;
     });
+    // The instance, not the shell that launched it: see isInstanceAlive.
+    const instanceAlive = (): boolean => isInstanceAlive(pid);
+    /**
+     * Ours to release. An orphan that escaped still holds the write ends of
+     * these pipes, and while it does Node keeps the read ends open - which
+     * kept Twin itself alive after it had reported the failure: hung in CI
+     * until the runner's own timeout.
+     */
+    const releaseStdio = (): void => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    };
 
     // Recorded here, before the health poll, not after it. The poll can take
     // the whole boot timeout (three attempts of up to 60s), and an instance
@@ -338,16 +353,40 @@ export class ProcessInstanceDriver implements InstanceDriver {
     };
 
     try {
-      await pollHealth(baseUrl, spec.healthPath, spec.bootTimeoutMs, () => isProcessAlive(pid));
+      await pollHealth(baseUrl, spec.healthPath, spec.bootTimeoutMs, instanceAlive);
     } catch (err) {
       settled = true;
-      // Ask the OS directly rather than trusting our `exited` flag here: the
-      // 'exit' event can lag a tick behind the process actually being gone,
-      // so reading it right now would be a race.
-      const alreadyDead = !isProcessAlive(pid);
-      if (!alreadyDead) await killTree(pid, { mode: "crash", graceMs: 0 });
-      await forgetInstance();
+      // Ask the OS directly rather than trusting the 'exit' event here: it
+      // can lag a tick behind the process actually being gone.
+      const alreadyDead = !instanceAlive();
+      // Unconditionally. Gating this on the leader being alive is how a
+      // backgrounded server outlived a failed boot - killTree signals the
+      // group, which is exactly what survives a leader that already exited.
+      await killTree(pid, { mode: "crash", graceMs: 0 });
+      // Only forgotten once it really is gone. A record dropped while the
+      // group lived on left pids.json empty, and `twin clean` blind to it.
+      if (!instanceAlive()) await forgetInstance();
       await awaitLogs();
+      // Pipes still open with every process we know of dead: something we
+      // can't see has them - a server handed off to a daemon or its own session.
+      const handedOff = !stdioClosed;
+      releaseStdio();
+
+      if (alreadyDead && spawnError === undefined && (exitCode === 0 || handedOff)) {
+        throw new TwinError(
+          "E_BOOT_DETACHED",
+          `\`${spec.command}\` exited${exitCode === 0 ? " successfully" : ""} instead of staying in the foreground, so instance ${
+            ws.instance
+          } never served from a process Twin can see or stop.`,
+          {
+            hint:
+              "Twin has to own the server process to restart it and clean it up. Run it in the foreground: drop a trailing `&`, use `pm2-runtime start` rather than `pm2 start`, and leave off any --daemon / -d flag." +
+              (handedOff ? " The server may still be running outside Twin - check its port and stop it yourself." : ""),
+            details: { instance: ws.instance, port, logTail: logs.lines(30) },
+            cause: err
+          }
+        );
+      }
 
       if (spawnError !== undefined) {
         throw new TwinError(
@@ -396,10 +435,14 @@ export class ProcessInstanceDriver implements InstanceDriver {
       );
     }
 
-    if (exited || spawnError !== undefined) {
+    // The instance, not the leader: a backgrounded server whose launching
+    // shell has exited is still running in our group, still ours to stop.
+    if (!instanceAlive() || spawnError !== undefined) {
       settled = true;
-      await forgetInstance();
+      await killTree(pid, { mode: "crash", graceMs: 0 });
+      if (!instanceAlive()) await forgetInstance();
       await awaitLogs();
+      releaseStdio();
       throw new TwinError(
         "E_BOOT_CRASH",
         `Instance ${ws.instance} exited right after reporting healthy (${exitInfo}).`,

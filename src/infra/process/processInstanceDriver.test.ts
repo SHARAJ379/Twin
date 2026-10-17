@@ -206,3 +206,81 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
     }
   });
 });
+
+/** Starts listening after 0.8s, like a real app that does some setup first. */
+const SLOW_SERVER = `
+const http = require("node:http");
+setTimeout(() => {
+  http.createServer((req, res) => res.end("ok")).listen(Number(process.env.PORT), "127.0.0.1");
+}, 800);
+`;
+
+/**
+ * Hands the server to a process in its own session and exits 0 - what
+ * `pm2 start` or a --daemon flag does. The server keeps this launcher's
+ * stdout/stderr, so it holds Twin's pipes open, and records its pid so the
+ * test can stop what Twin by design can't.
+ */
+const DAEMONIZING_LAUNCHER = `
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const child = spawn(process.execPath, ["s.js"], { detached: true, stdio: "inherit" });
+fs.writeFileSync("escaped.pid", String(child.pid));
+child.unref();
+`;
+
+/**
+ * Reported by an external audit with \`--start "node s.js &"\`: Twin called a
+ * server that was booting fine a crash ("exit code 0"), three times; skipped
+ * killing the process group because its leader was "already dead"; dropped
+ * the pid records; and then never exited, because the orphaned servers held
+ * its stdout/stderr pipes - three servers left holding ports, and a CI job
+ * hung until the runner's timeout.
+ */
+describe("ProcessInstanceDriver: start commands that background the server", () => {
+  let root: string;
+  let source: string;
+  let driver: ProcessInstanceDriver;
+  let pidFile: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(os.tmpdir(), "twin-bg-test-"));
+    source = await mkdtemp(path.join(os.tmpdir(), "bg-source-"));
+    pidFile = path.join(root, "pids.json");
+    await writeFile(path.join(source, "s.js"), SLOW_SERVER, "utf8");
+    await writeFile(path.join(source, "launch.js"), DAEMONIZING_LAUNCHER, "utf8");
+    driver = new ProcessInstanceDriver(new FsWorkspaceManager(root), logger, pidFile);
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(source, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  const spec = (command: string): StartSpec => ({ command, portEnv: "PORT", env: {}, healthPath: "/", bootTimeoutMs: 10_000 });
+
+  it.skipIf(process.platform === "win32")("manages `node s.js &` as the instance it is: boots, serves, and stop() kills it", async () => {
+    const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });
+    const handle = await driver.start(ws, spec("node s.js &"));
+    await expect(fetchOk(handle.baseUrl)).resolves.toBe(true);
+
+    await driver.stop(handle, { graceMs: 2000 });
+    await expect(fetchOk(handle.baseUrl)).resolves.toBe(false);
+  }, 30_000);
+
+  it("refuses a start command that hands its server off, once, without hanging", async () => {
+    const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });
+    const spawned = vi.spyOn(driver as unknown as { spawnOnce: () => Promise<unknown> }, "spawnOnce");
+
+    const err = await driver.start(ws, spec("node launch.js")).catch((e: unknown) => e);
+    try {
+      expect(TwinError.isTwinError(err) && err.code).toBe("E_BOOT_DETACHED");
+      expect((err as TwinError).hint).toContain("foreground");
+      // Deterministic, so never retried: each retry used to leave another server behind.
+      expect(spawned).toHaveBeenCalledTimes(1);
+    } finally {
+      const escaped = Number(await readFile(path.join(ws.dir, "escaped.pid"), "utf8").catch(() => "0"));
+      if (escaped > 0 && isProcessAlive(escaped)) process.kill(escaped);
+    }
+  }, 30_000);
+});

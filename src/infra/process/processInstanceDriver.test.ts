@@ -284,3 +284,56 @@ describe("ProcessInstanceDriver: start commands that background the server", () 
     }
   }, 30_000);
 });
+
+/**
+ * Audit, third round: an app that ignores PORT and listens on a port of its
+ * own stays alive and never answers, and Twin waited out the 60s boot
+ * timeout three times - three minutes - before saying "did not become healthy".
+ */
+describe("ProcessInstanceDriver: an app listening on a port of its own", () => {
+  let root: string;
+  let source: string;
+  let driver: ProcessInstanceDriver;
+
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(os.tmpdir(), "twin-port-test-"));
+    source = await mkdtemp(path.join(os.tmpdir(), "port-source-"));
+    driver = new ProcessInstanceDriver(new FsWorkspaceManager(root), logger);
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    await rm(source, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  const spec: StartSpec = { command: "node s.js", portEnv: "PORT", env: {}, healthPath: "/", bootTimeoutMs: 3_000 };
+
+  it("gives up after one timeout, and names the port the app's log says it took", async () => {
+    const ownPort = await portAllocator.getFreePort();
+    await writeFile(
+      path.join(source, "s.js"),
+      `require("node:http").createServer((_, res) => res.end("ok")).listen(${ownPort}, "127.0.0.1", () => console.log("Server listening on port ${ownPort}"));`,
+      "utf8"
+    );
+    const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });
+    const spawned = vi.spyOn(driver as unknown as { spawnOnce: () => Promise<unknown> }, "spawnOnce");
+
+    const started = Date.now();
+    const err = await driver.start(ws, spec).catch((e: unknown) => e);
+    expect(TwinError.isTwinError(err) && err.code).toBe("E_BOOT_TIMEOUT");
+    expect((err as TwinError).message).toContain(`listening on port ${ownPort}`);
+    expect((err as TwinError).hint).toContain("--port-env");
+    expect(spawned).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(2 * spec.bootTimeoutMs);
+  }, 30_000);
+
+  it("still retries a crash on boot, which can come out differently", async () => {
+    await writeFile(path.join(source, "s.js"), `process.exit(1);`, "utf8");
+    const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });
+    const spawned = vi.spyOn(driver as unknown as { spawnOnce: () => Promise<unknown> }, "spawnOnce");
+
+    const err = await driver.start(ws, spec).catch((e: unknown) => e);
+    expect(TwinError.isTwinError(err) && err.code).toBe("E_BOOT_CRASH");
+    expect(spawned).toHaveBeenCalledTimes(3);
+  }, 30_000);
+});

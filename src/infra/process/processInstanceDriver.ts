@@ -3,6 +3,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { createConnection } from "node:net";
 import path from "node:path";
 
+import { portsAnnouncedInLog } from "../../domain/bootDiagnosis.js";
 import { TwinError } from "../../domain/errors.js";
 import type { FsSnapshot } from "../../domain/workspaceDiff.js";
 import type {
@@ -176,9 +177,12 @@ export class ProcessInstanceDriver implements InstanceDriver {
         return await this.spawnOnce(ws, spec);
       } catch (err) {
         lastErr = err;
-        // A start command that hands its server off and exits does it every
-        // time. Retrying only spawned another server that escaped too.
-        if (TwinError.isTwinError(err) && err.code === "E_BOOT_DETACHED") break;
+        // Only a lost port race or a crash on boot can come out differently
+        // next time. A start command that hands its server off does it every
+        // time (retrying spawned another server that escaped too), and an app
+        // that stayed up but never answered - usually one listening on a port
+        // of its own - waited out the full boot timeout three times over.
+        if (!TwinError.isTwinError(err) || (err.code !== "E_PORT_UNAVAILABLE" && err.code !== "E_BOOT_CRASH")) break;
         this.logger.warn(`boot attempt ${attempt}/${MAX_BOOT_ATTEMPTS} for ${ws.instance} failed`, {
           error: err instanceof Error ? err.message : String(err)
         });
@@ -415,6 +419,21 @@ export class ProcessInstanceDriver implements InstanceDriver {
           {
             hint: "Re-run `twin run` - this is a rare timing race (Twin frees the port right before handing it to your app) and should succeed on retry.",
             details: { instance: ws.instance, port, logTail: logs.lines(30) },
+            cause: err
+          }
+        );
+      }
+
+      // Alive the whole time and never answering: the app's own startup line
+      // usually says where it went instead.
+      const elsewhere = alreadyDead ? [] : portsAnnouncedInLog(logs.lines(200)).filter((p) => p !== port);
+      if (elsewhere.length > 0) {
+        throw new TwinError(
+          "E_BOOT_TIMEOUT",
+          `Instance ${ws.instance} is listening on port ${elsewhere.join("/")}, not on port ${port} that Twin assigned it through ${spec.portEnv}.`,
+          {
+            hint: `The app ignores ${spec.portEnv} and picks its own port, so Twin can't reach it (and two instances would collide). Make it read ${spec.portEnv}, pass --port-env <the variable it does read>, or put {{port}} in the start command.`,
+            details: { instance: ws.instance, port, announcedPorts: elsewhere, logTail: logs.lines(30) },
             cause: err
           }
         );

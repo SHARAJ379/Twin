@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- An app that ignores `PORT` costs one boot timeout, not three. A boot is retried only after a
+  lost port race or a crash; an instance that stayed up but never answered was retried twice
+  more, three minutes at the default timeout. When the app's own log announces a different port
+  ("listening on port 3000"), the error says so and how to fix it.
 - `twin init` adds `.twin/` to the project's `.gitignore` (creating it if missing, never
   duplicating the entry), and the README no longer claims Twin "never touches your actual source
   tree": it writes `.twin/`, and the instances share the real `node_modules`/`.venv`/`vendor`.

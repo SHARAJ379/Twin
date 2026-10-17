@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { TwinError } from "../../domain/errors.js";
@@ -9,8 +9,28 @@ import { isProcessAlive } from "../process/isProcessAlive.js";
 interface LockFileContents {
   pid: number;
   startedAt: string;
-  /** Distinguishes our own lock file instance so release() never deletes a lock someone else now owns. */
+  /** Distinguishes our own lock file instance from any other run's, including one with a recycled pid. */
   token: string;
+  /** Written by release(): this generation is a tombstone, and the lock is free. */
+  released?: boolean;
+}
+
+/** `lock.<generation>` - see acquireLock for why the lock is a series of files, not one. */
+const LOCK_FILE = /^lock\.(\d+)$/;
+
+/**
+ * How long an unparseable lock file is presumed to be mid-write rather than
+ * abandoned. Only the no-hard-links fallback in tryCreateLockFile ever
+ * publishes a lock file before its contents.
+ */
+const UNREADABLE_LOCK_GRACE_MS = 5_000;
+
+interface TopLock {
+  generation: number;
+  path: string;
+  /** null when the file could not be parsed. */
+  contents: LockFileContents | null;
+  ageMs: number;
 }
 
 function makeRunId(now: Date): string {
@@ -66,26 +86,27 @@ export class FsArtifactStore implements ArtifactStore {
    * Takes the project lock, or refuses. Two runs holding it at once means one
    * `.twin/` shared by both, racing on pids.json and the run directory.
    *
-   * Three things are needed to actually exclude a peer, and the first two were
-   * each tried alone and weren't enough:
+   * The lock is a series of files, `lock.1`, `lock.2`, ..., and the run that
+   * holds it is the live owner of the highest-numbered one. Taking the lock
+   * means exclusively creating the *next* number. Nothing is ever moved,
+   * overwritten or deleted to take it - not even a stale lock.
    *
-   * 1. The create must be exclusive. Reading the path and then writing it left
-   *    a window in which both runs saw no lock.
-   * 2. The file must become visible already complete (see tryCreateLockFile).
-   *    An exclusive create still publishes it empty for a moment, and a peer
-   *    reading it then saw an unparseable lock and reclaimed it as stale.
-   * 3. Reclaiming a stale lock must itself be atomic - a rename, not a read
-   *    and then a delete (see stealStaleLock). Checking the token before
-   *    deleting narrowed that window without closing it: two runs could both
-   *    pass the check, and the slower delete then landed on the fresh lock the
-   *    faster run had already taken.
+   * That is the whole point. Every earlier version of this lock had to get a
+   * stale file out of the way, and every way of doing that acted on whatever
+   * was at the path *by then*: read-then-delete deleted a fresh lock a peer had
+   * just taken, and so did rename, which is atomic about the move and blind
+   * about what it moves. A run that judged `lock.N` stale now creates
+   * `lock.N+1`, and if any other run got there first - however long ago, and
+   * whatever it then did - that create fails. The judgement and the claim can
+   * no longer drift apart, because the claim names the thing judged.
    *
-   * And taking the lock is confirmed by reading it back, so that if any of
-   * this is still wrong, the outcome is a refusal rather than two holders.
+   * The read-back after creating stays. It is what catches a create on a
+   * number that a later generation has already passed: generations below the
+   * top are pruned, so a run that stalled long enough can create one again,
+   * and it must then see that it isn't the top and withdraw.
    */
   async acquireLock(): Promise<Lock> {
     await mkdir(this.root, { recursive: true });
-    const lockPath = path.join(this.root, "lock");
 
     const contents: LockFileContents = {
       pid: process.pid,
@@ -99,50 +120,68 @@ export class FsArtifactStore implements ArtifactStore {
         details: { pid: existing.pid, startedAt: existing.startedAt },
         exitCode: 2
       });
-
-    let acquired = false;
-    // Three attempts: each one can lose a reclaim race to a peer, and losing
-    // twice in a row means someone else is winning, which is a refusal.
-    for (let attempt = 0; attempt < 3 && !acquired; attempt++) {
-      if (await this.tryCreateLockFile(lockPath, contents)) {
-        // Read back before trusting it: the belt to stealStaleLock's braces.
-        // If anything did move this file out from under us, the token here is
-        // someone else's, and we must refuse rather than go on to share this
-        // project's .twin with them.
-        const seen = await this.readLockFile(lockPath);
-        if (seen !== null && seen.token === contents.token) {
-          acquired = true;
-          break;
-        }
-        if (seen !== null && isProcessAlive(seen.pid)) throw held(seen);
-        continue;
-      }
-
-      const existing = await this.readLockFile(lockPath);
-      if (existing !== null && isProcessAlive(existing.pid)) throw held(existing);
-      // Stale, or unreadable and so unattributable. Reclaiming it is a steal,
-      // not a delete: exactly one racing run can rename it away, and the
-      // others go round again to look at whatever is there now.
-      await this.stealStaleLock(lockPath, contents.token);
-    }
-
-    if (!acquired) {
-      throw new TwinError("E_LOCKED", "Could not take this project's Twin lock.", {
+    const contended = (): TwinError =>
+      new TwinError("E_LOCKED", "Could not take this project's Twin lock.", {
         hint: "Another `twin run` is starting at the same moment. Try again, or run `twin clean`.",
         exitCode: 2
       });
+
+    // Three attempts: each one can lose the next generation to a peer, and
+    // losing three times in a row means someone else is winning.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const top = await this.readTopLock();
+      if (top !== undefined) {
+        if (top.contents === null) {
+          // Mid-write under the no-hard-links fallback, or a corpse. Only age
+          // tells them apart, and treating a young one as stale is how this
+          // lock once let two runs in.
+          if (top.ageMs < UNREADABLE_LOCK_GRACE_MS) throw contended();
+        } else if (!top.contents.released && isProcessAlive(top.contents.pid)) {
+          throw held(top.contents);
+        }
+      }
+
+      const generation = (top?.generation ?? 0) + 1;
+      const ours = this.lockPath(generation);
+      // EEXIST: a peer claimed this generation first. Go and look at it.
+      if (!(await this.tryCreateLockFile(ours, contents))) continue;
+
+      const now = await this.readTopLock();
+      if (now?.generation === generation && now.contents?.token === contents.token) {
+        await this.pruneLocksBelow(generation);
+        return this.heldLock(generation, contents);
+      }
+      // A higher generation exists, so ours was never the lock. It is below
+      // the top and can never become it again, so it is safe to withdraw.
+      await rm(ours, { force: true });
     }
 
+    throw contended();
+  }
+
+  private heldLock(generation: number, contents: LockFileContents): Lock {
     let released = false;
     return {
       release: async () => {
         if (released) return;
         released = true;
-        const current = await this.readLockFile(lockPath);
-        // Only remove the lock file if it's still the one we wrote.
-        if (current !== null && current.token === contents.token) {
-          await rm(lockPath, { force: true });
+        const top = await this.readTopLock();
+        if (top?.generation !== generation || top.contents?.token !== contents.token) {
+          // Someone has since passed us - only possible if we were judged
+          // dead. Their generation is the lock now; ours is just litter.
+          await rm(this.lockPath(generation), { force: true });
+          return;
         }
+        // Releasing is another generation, not a delete or an overwrite: the
+        // top file must never disappear or be rewritten in place, or a peer
+        // could read it half-written, or a stalled peer could claim the
+        // number again. A tombstone on top says "free" without either.
+        const tombstone: LockFileContents = { ...contents, token: randomUUID(), released: true };
+        if (await this.tryCreateLockFile(this.lockPath(generation + 1), tombstone)) {
+          await this.pruneLocksBelow(generation + 1);
+        }
+        // If that create lost, a peer judged us dead and took generation+1.
+        // Either way our file is no longer the top, and the next pruner takes it.
       }
     };
   }
@@ -161,6 +200,52 @@ export class FsArtifactStore implements ArtifactStore {
     await Promise.all(toRemove.map((id) => rm(path.join(runsDir, id), { recursive: true, force: true })));
   }
 
+  private lockPath(generation: number): string {
+    return path.join(this.root, `lock.${generation}`);
+  }
+
+  private async lockGenerations(): Promise<number[]> {
+    let entries: string[];
+    try {
+      entries = await readdir(this.root);
+    } catch {
+      return [];
+    }
+    const generations: number[] = [];
+    for (const name of entries) {
+      const match = LOCK_FILE.exec(name);
+      if (match?.[1] !== undefined) generations.push(Number(match[1]));
+    }
+    return generations.sort((a, b) => a - b);
+  }
+
+  private async readTopLock(): Promise<TopLock | undefined> {
+    // Highest first. A generation can be pruned between the listing and the
+    // read; that one is simply no longer the top, so look at the next.
+    const generations = (await this.lockGenerations()).reverse();
+    for (const generation of generations) {
+      const lockPath = this.lockPath(generation);
+      let ageMs: number;
+      try {
+        ageMs = Date.now() - (await stat(lockPath)).mtimeMs;
+      } catch {
+        continue;
+      }
+      return { generation, path: lockPath, contents: await this.readLockFile(lockPath), ageMs };
+    }
+    return undefined;
+  }
+
+  /**
+   * Housekeeping only, so failures are ignored: a generation below the top is
+   * never consulted again, and a file Windows won't let go of yet (antivirus
+   * holding it open, say) is harmless where it is until the next prune.
+   */
+  private async pruneLocksBelow(generation: number): Promise<void> {
+    const below = (await this.lockGenerations()).filter((g) => g < generation);
+    await Promise.all(below.map((g) => rm(this.lockPath(g), { force: true }).catch(() => undefined)));
+  }
+
   /**
    * Creates the lock file complete, or reports that someone else got there.
    *
@@ -168,8 +253,8 @@ export class FsArtifactStore implements ArtifactStore {
    * fails on an existing target and publishes the file already populated.
    * `open(..., "wx")` is exclusive but creates the file *empty* and fills it a
    * moment later, and a peer that read it inside that window got an
-   * unparseable lock, concluded it was stale, deleted it and took the lock -
-   * so both runs held it, which is the thing the exclusive create was for.
+   * unparseable lock, concluded it was stale, and took the lock - so both runs
+   * held it, which is the thing the exclusive create was for.
    */
   private async tryCreateLockFile(lockPath: string, contents: LockFileContents): Promise<boolean> {
     const json = JSON.stringify(contents);
@@ -185,8 +270,8 @@ export class FsArtifactStore implements ArtifactStore {
       // container bind mounts, answer EPERM/ENOTSUP/ENOSYS. Rethrowing meant
       // `twin run` could not take the lock there at all, so it refused to
       // start, every time. An exclusive create is the fallback: it leaves the
-      // brief window where the file exists empty, which the read-back check
-      // after acquiring is there to catch anyway.
+      // brief window where the file exists empty, which is why acquireLock
+      // treats a young unreadable lock as held rather than stale.
       if (code !== "EPERM" && code !== "ENOTSUP" && code !== "ENOSYS" && code !== "EXDEV" && code !== "EACCES") throw err;
       try {
         await writeFile(lockPath, json, { encoding: "utf8", flag: "wx" });
@@ -200,41 +285,12 @@ export class FsArtifactStore implements ArtifactStore {
     }
   }
 
-  /**
-   * Takes a stale lock out of the way, atomically, and says whether this
-   * process is the one that did it.
-   *
-   * `rename` is the whole mechanism: the destination is unique per attempt, so
-   * two runs renaming the same lock cannot both succeed - the loser finds
-   * nothing there and gets ENOENT. Checking the token and *then* deleting
-   * looked equivalent and wasn't: both runs could pass the check, and the
-   * second `rm` would land on the fresh lock the first had already taken,
-   * leaving two runs each believing they held it. A read followed by a write
-   * is not a compare-and-swap, which is the same mistake this lock has now
-   * made twice, in two different spellings.
-   */
-  private async stealStaleLock(lockPath: string, token: string): Promise<boolean> {
-    const graveyard = `${lockPath}.stale.${token}`;
-    try {
-      await rename(lockPath, graveyard);
-      await rm(graveyard, { force: true });
-      return true;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      // ENOENT: someone else got there first. Anything else (a Windows share
-      // violation, say) is also "not ours to reclaim" - either way, go back
-      // and look at what is there now.
-      if (code === "ENOENT" || code === "EPERM" || code === "EACCES" || code === "EBUSY") return false;
-      throw err;
-    }
-  }
-
   private async readLockFile(lockPath: string): Promise<LockFileContents | null> {
     try {
       const raw = await readFile(lockPath, "utf8");
       const parsed = JSON.parse(raw) as Partial<LockFileContents>;
       if (typeof parsed.pid === "number" && typeof parsed.startedAt === "string" && typeof parsed.token === "string") {
-        return { pid: parsed.pid, startedAt: parsed.startedAt, token: parsed.token };
+        return { pid: parsed.pid, startedAt: parsed.startedAt, token: parsed.token, released: parsed.released === true };
       }
       return null;
     } catch {

@@ -25,7 +25,7 @@ export interface ArtifactStore {
   /** Builds a handle for an existing run by id, without touching the filesystem. */
   getRun(id: string): RunHandle;
   /**
-   * Acquires the single-run lock (`.twin/lock`). Throws TwinError("E_LOCKED")
+   * Acquires the single-run lock (`.twin/lock.<generation>`). Throws TwinError("E_LOCKED")
    * if another live process holds it; a lock left behind by a dead PID is
    * detected and reclaimed automatically.
    */

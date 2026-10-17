@@ -1,11 +1,18 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TwinError } from "../../domain/errors.js";
+import type { Lock } from "../../ports/artifactStore.js";
 import { FsArtifactStore } from "./fsArtifactStore.js";
+
+const STALE = JSON.stringify({ pid: 999_999, startedAt: "x", token: "stale" });
+
+async function lockFiles(projectDir: string): Promise<string[]> {
+  return (await readdir(path.join(projectDir, ".twin"))).filter((name) => name.startsWith("lock"));
+}
 
 describe("FsArtifactStore", () => {
   let projectDir: string;
@@ -110,38 +117,79 @@ describe("FsArtifactStore", () => {
   it("lets exactly one of several runs reclaim the same stale lock", async () => {
     const store = new FsArtifactStore(projectDir);
     await mkdir(path.join(projectDir, ".twin"), { recursive: true });
-    await writeFile(
-      path.join(projectDir, ".twin", "lock"),
-      JSON.stringify({ pid: 999_999, startedAt: "x", token: "stale" }),
-      "utf8"
-    );
+    await writeFile(path.join(projectDir, ".twin", "lock.1"), STALE, "utf8");
 
     const outcomes = await Promise.allSettled([store.acquireLock(), store.acquireLock(), store.acquireLock()]);
     const won = outcomes.filter((o) => o.status === "fulfilled");
 
     expect(won).toHaveLength(1);
-    // and the one that won really is the lock on disk
-    const onDisk = JSON.parse(await readFile(path.join(projectDir, ".twin", "lock"), "utf8")) as { pid: number };
+    // and the one that won really is the lock on disk, with the stale one pruned
+    expect(await lockFiles(projectDir)).toEqual(["lock.2"]);
+    const onDisk = JSON.parse(await readFile(path.join(projectDir, ".twin", "lock.2"), "utf8")) as { pid: number };
     expect(onDisk.pid).toBe(process.pid);
 
     await (won[0] as PromiseFulfilledResult<{ release: () => Promise<void> }>).value.release();
   });
 
-  it("leaves no stale-steal temp files behind", async () => {
-    const store = new FsArtifactStore(projectDir);
-    const lock = await store.acquireLock();
-    await lock.release();
+  /**
+   * The rename-based steal's race, reproduced exactly as reported. P reads the
+   * stale lock and judges it stale; Q then does a whole acquire; P resumes.
+   * The rename moved Q's fresh lock away - it renamed whatever was at the path
+   * by then - and both P and Q went on to believe they held the lock.
+   */
+  it("does not let a run that judged a lock stale take it from a run that has since acquired it", async () => {
+    await mkdir(path.join(projectDir, ".twin"), { recursive: true });
+    await writeFile(path.join(projectDir, ".twin", "lock.1"), STALE, "utf8");
 
-    const left = await readdir(path.join(projectDir, ".twin"));
-    expect(left.filter((name) => name.startsWith("lock."))).toEqual([]);
+    const p = new FsArtifactStore(projectDir);
+    const q = new FsArtifactStore(projectDir);
+    let qLock: Lock | undefined;
+
+    // P's first look at the lock sees it stale, then stalls while Q acquires.
+    type Internals = { readTopLock: () => Promise<unknown> };
+    const pInternals = p as unknown as Internals;
+    const realRead = pInternals.readTopLock.bind(p);
+    vi.spyOn(pInternals, "readTopLock").mockImplementationOnce(async () => {
+      const staleView = await realRead();
+      qLock = await q.acquireLock();
+      return staleView;
+    });
+
+    await expect(p.acquireLock()).rejects.toMatchObject({ code: "E_LOCKED" });
+    expect(qLock).toBeDefined();
+    // Q's lock is still the lock.
+    expect(await lockFiles(projectDir)).toEqual(["lock.2"]);
+
+    await qLock!.release();
+    await (await p.acquireLock()).release();
+  });
+
+  it("treats an unreadable lock as mid-write while it is young, and as abandoned once it is old", async () => {
+    const lockPath = path.join(projectDir, ".twin", "lock.1");
+    await mkdir(path.join(projectDir, ".twin"), { recursive: true });
+    await writeFile(lockPath, "", "utf8");
+
+    const store = new FsArtifactStore(projectDir);
+    await expect(store.acquireLock()).rejects.toMatchObject({ code: "E_LOCKED" });
+
+    const longAgo = new Date(Date.now() - 60_000);
+    await utimes(lockPath, longAgo, longAgo);
+    await (await store.acquireLock()).release();
+  });
+
+  it("leaves only the released tombstone behind, and no temp files", async () => {
+    const store = new FsArtifactStore(projectDir);
+    await (await store.acquireLock()).release();
+    await (await store.acquireLock()).release();
+
+    expect(await lockFiles(projectDir)).toEqual(["lock.4"]);
   });
 
   it("reclaims a lock left behind by a dead pid", async () => {
     const store = new FsArtifactStore(projectDir);
-    const lockPath = path.join(projectDir, ".twin", "lock");
     await mkdir(path.join(projectDir, ".twin"), { recursive: true });
     // A pid that (almost certainly) does not exist.
-    await writeFile(lockPath, JSON.stringify({ pid: 999_999, startedAt: "x", token: "stale" }), "utf8");
+    await writeFile(path.join(projectDir, ".twin", "lock.7"), STALE, "utf8");
 
     const lock = await store.acquireLock();
     await lock.release();

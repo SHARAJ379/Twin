@@ -9,6 +9,9 @@ shift between minor versions.
 
 ### Fixed
 
+- Every run says, in the terminal and the README, that the scenario's records stay in the
+  database the app is configured with. Nothing said so, and a dev database filled up with test
+  users one run at a time.
 - An app that ignores `PORT` costs one boot timeout, not three. A boot is retried only after a
   lost port race or a crash; an instance that stayed up but never answered was retried twice
   more, three minutes at the default timeout. When the app's own log announces a different port
@@ -306,6 +309,10 @@ shift between minor versions.
 
 ### Added
 
+- `"setup"` in `twin.config.json` (or `--setup`): a command run in the project before CONTROL and
+  before SPLIT, typically a reset of a throwaway database (`npm run db:reset`), with the
+  instances' env plus `TWIN_PHASE`. A failing setup stops the run with `E_SETUP_FAILED` before
+  anything boots.
 - `report.json` findings carry `blockedBy: "auth"` when the assertion was refused before it
   reached the subject the check is named after. Additive, so `schemaVersion` stays `1`.
 

@@ -107,6 +107,10 @@ program
     'start command (defaults to twin.config.json\'s "start", then the stack\'s own detection). `{{port}}` is replaced with the port Twin assigns'
   )
   .option("--build <command>", "build command to run once per instance workspace before --start (e.g. for TypeScript/Next.js apps)")
+  .option(
+    "--setup <command>",
+    "run in the project before CONTROL and before SPLIT, e.g. a throwaway database's reset (defaults to twin.config.json's \"setup\")"
+  )
   .option("--health-path <path>", 'path polled for readiness (default "/health")')
   .option("--port-env <name>", 'env var the app reads its port from (default "PORT")')
   .option("--boot-timeout-ms <ms>", "boot timeout per instance (default 60000)", parseMilliseconds("--boot-timeout-ms"))
@@ -140,6 +144,7 @@ program
     stack?: string;
     start?: string;
     build?: string;
+    setup?: string;
     healthPath?: string;
     portEnv?: string;
     bootTimeoutMs?: number;
@@ -158,6 +163,7 @@ program
           stack: opts.stack,
           start: opts.start,
           build: opts.build,
+          setup: opts.setup,
           healthPath: opts.healthPath,
           portEnv: opts.portEnv,
           bootTimeoutMs: opts.bootTimeoutMs,

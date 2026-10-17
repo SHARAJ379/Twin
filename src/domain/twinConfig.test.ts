@@ -12,6 +12,7 @@ describe("validateTwinConfig", () => {
       scenario: "scenario.yaml",
       start: "npm start",
       build: "npm run build",
+      setup: "npm run db:reset",
       healthPath: "/health",
       portEnv: "PORT",
       bootTimeoutMs: 30_000,

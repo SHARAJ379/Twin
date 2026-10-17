@@ -5,6 +5,12 @@ export interface TwinConfig {
   stack?: string;
   start?: string;
   build?: string;
+  /**
+   * Run in the project before CONTROL and before SPLIT - typically a reset of
+   * a throwaway database (`npm run db:reset`), so each phase starts from the
+   * same state and test records don't pile up in a real dev database.
+   */
+  setup?: string;
   healthPath?: string;
   portEnv?: string;
   bootTimeoutMs?: number;
@@ -26,7 +32,7 @@ export interface TwinConfigError {
 
 export type TwinConfigValidationResult = { ok: true; config: TwinConfig } | { ok: false; errors: TwinConfigError[] };
 
-const STRING_FIELDS = ["scenario", "stack", "start", "build", "healthPath", "portEnv"] as const;
+const STRING_FIELDS = ["scenario", "stack", "start", "build", "setup", "healthPath", "portEnv"] as const;
 const NUMBER_FIELDS = ["bootTimeoutMs", "requestTimeoutMs"] as const;
 const STRING_ARRAY_FIELDS = ["redactHeaders", "allowRemoteHosts"] as const;
 const ALLOWED_KEYS = new Set<string>([...STRING_FIELDS, ...NUMBER_FIELDS, ...STRING_ARRAY_FIELDS, "env", "allowRemote"]);

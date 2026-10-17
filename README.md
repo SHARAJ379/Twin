@@ -216,6 +216,7 @@ All fields are optional:
 | `stack`         | `node` \| `python` \| `go` \| `ruby` \| `php`                     | detected from marker files               |
 | `start`         | shell command that boots the app (may contain `{{port}}`)        | the stack's own detection                |
 | `build`         | shell command run once per instance workspace before `start`    | *(skipped)*                             |
+| `setup`         | shell command run in the project before CONTROL and before SPLIT, e.g. `npm run db:reset` (gets the instances' env, plus `TWIN_PHASE`) | *(skipped)* |
 | `healthPath`    | path polled for readiness                                       | `/health`                               |
 | `portEnv`       | env var name the app reads its port from                        | `PORT`                                  |
 | `bootTimeoutMs` | boot timeout per instance, in ms                                 | `60000`                                 |
@@ -244,6 +245,7 @@ against both, and writes a report.
 --start <command>       start command (defaults to config, then the stack's detection);
                         `{{port}}` is replaced with the port Twin assigns
 --build <command>       build command to run once per instance workspace before --start
+--setup <command>       run in the project before CONTROL and before SPLIT (e.g. a database reset)
 --health-path <path>    path polled for readiness (default "/health")
 --port-env <name>       env var the app reads its port from (default "PORT")
 --boot-timeout-ms <ms>  boot timeout per instance (default 60000)
@@ -378,6 +380,15 @@ outright. The common ones:
 1. **PREFLIGHT** - validates the scenario, scans the environment for anything that
    looks like a real (non-local) database or third-party service, and refuses to run
    against one unless you pass `--allow-remote` (Twin writes real test data).
+
+> **Your local database keeps what the scenario writes.** Twin's instances are
+> throwaway, but the database they connect to is whatever your app is configured
+> with, and nothing removes the users and records each run creates. So every run
+> adds more of them to your dev database. Either point Twin at a throwaway database
+> (`--env DATABASE_URL=...`), or set `"setup"` in `twin.config.json` to a command
+> that resets one (`"setup": "npm run db:reset"`). Twin runs it in the project before
+> CONTROL and again before SPLIT, so each phase also starts from the same state.
+> The terminal says this on every run that has no `setup`.
 2. **CONTROL** - boots one throwaway instance and runs the whole scenario against it
    alone, proving the scenario/app works before a SPLIT failure gets blamed on
    multi-instance behavior.

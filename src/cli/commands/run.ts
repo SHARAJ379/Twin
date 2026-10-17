@@ -24,6 +24,7 @@ import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
 import { loadTwinConfig } from "../../infra/config/loadTwinConfig.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS, HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
+import { runSetupCommand } from "../../infra/process/runSetupCommand.js";
 import { HttpProxy } from "../../infra/proxy/httpProxy.js";
 import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
 import { loadSourceFilesForSafetyScan } from "../../infra/safety/loadSourceFiles.js";
@@ -48,6 +49,8 @@ export interface RunOptions {
   start?: string | undefined;
   /** Run once per instance workspace before `start`. Falls back to twin.config.json's "build". */
   build?: string | undefined;
+  /** Run in the project before CONTROL and before SPLIT (e.g. a database reset). Falls back to twin.config.json's "setup". */
+  setup?: string | undefined;
   healthPath?: string | undefined;
   portEnv?: string | undefined;
   bootTimeoutMs?: number | undefined;
@@ -128,6 +131,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     const scenario = parsed.scenario;
 
     const build = options.build ?? config?.build;
+    const setup = options.setup ?? config?.setup;
     const healthPath = options.healthPath ?? config?.healthPath ?? DEFAULT_HEALTH_PATH;
     const portEnv = options.portEnv ?? config?.portEnv ?? DEFAULT_PORT_ENV;
     const bootTimeoutMs = options.bootTimeoutMs ?? config?.bootTimeoutMs ?? DEFAULT_BOOT_TIMEOUT_MS;
@@ -257,6 +261,21 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       await lock.release();
     });
 
+    // Every run writes real records through the app, into whatever database
+    // it is configured with. Said up front: nothing else would tell the user
+    // their dev database is accumulating test users.
+    const runSetup = async (phase: string): Promise<void> => {
+      if (setup === undefined) return;
+      logger.info(`setup: running \`${setup}\` before ${phase}`);
+      await runSetupCommand(setup, { cwd: options.projectDir, env, phase, redactLine: redactLogLine });
+    };
+    if (setup === undefined) {
+      logger.info(
+        'note: the scenario writes real records to the database your app is configured with, and Twin does not remove them - point it at a throwaway one, or set "setup" (e.g. "npm run db:reset") to reset it before each phase'
+      );
+    }
+
+    await runSetup("CONTROL");
     logger.info("CONTROL: running the scenario against one instance alone");
     const control = await runControlPhase(
       scenario,
@@ -271,6 +290,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       scenarioClient
     );
 
+    await runSetup("SPLIT");
     logger.info("SPLIT: running the scenario against A + B behind the proxy");
     const proxy = new HttpProxy({ upstreamTimeoutMs: requestTimeoutMs });
     const split = await runSplitPhase(

@@ -8,6 +8,7 @@ export type TwinErrorCode =
   | "E_UNSAFE_ENV"
   | "E_PORT_UNAVAILABLE"
   | "E_BUILD_FAILED"
+  | "E_SETUP_FAILED"
   | "E_WORKSPACE_LINK_FAILED"
   | "E_BOOT_TIMEOUT"
   | "E_BOOT_CRASH"

@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { evaluateExpectation } from "../../domain/expectation.js";
 import { redactBody, redactHeaders, redactUrl } from "../../domain/redaction.js";
-import { defaultRouteForCheck } from "../../domain/relatedSteps.js";
+import { defaultRouteForCheck, defaultRouteForSetup } from "../../domain/relatedSteps.js";
 import { fingerprintStep } from "../../domain/responseFingerprint.js";
 import { evaluateSaveExpression } from "../../domain/saveExpression.js";
 import type { RequestStep, RestartStep, Scenario, Step, WaitStep } from "../../domain/scenario.js";
-import type { RedactedRequest, RedactedResponse, StepResult } from "../../domain/stepResult.js";
-import { renderTemplateDeep, type TemplateHelpers } from "../../domain/template.js";
+import { NOT_SENT, type RedactedRequest, type RedactedResponse, type StepResult } from "../../domain/stepResult.js";
+import { renderTemplateDeep, TemplateVariableError, type TemplateHelpers } from "../../domain/template.js";
 import { PIN_HEADER } from "../proxy/httpProxy.js";
 import { CookieJar } from "./cookieJar.js";
 import { newFingerprintSalt, saltedHash } from "./fingerprintSalt.js";
@@ -104,7 +104,9 @@ export class HttpScenarioClient implements ScenarioClient {
 
     const instanceIds = ctx.instances.map((instance) => instance.id);
     for (const [index, declared] of scenario.steps.entries()) {
-      const via = defaultRouteForCheck(scenario, index, results, instanceIds);
+      const via =
+        defaultRouteForCheck(scenario, index, results, instanceIds) ??
+        defaultRouteForSetup(scenario, index, results, instanceIds);
       const step = via === undefined ? declared : { ...declared, via };
       const result = await this.executeStep(step, ctx, variables, cookieJar, helpers);
       if (result.saved !== undefined) Object.assign(variables, result.saved);
@@ -269,12 +271,21 @@ export class HttpScenarioClient implements ScenarioClient {
       responseText = await response.text();
     } catch (err) {
       const message = describeRequestError(err, timeoutMs);
+      // Failing before the request existed means it was never sent - almost
+      // always a {{var}} an earlier, failed step should have saved.
+      const notSent =
+        redactedRequest === undefined
+          ? {
+              code: NOT_SENT,
+              ...(err instanceof TemplateVariableError ? { missingVariable: err.variableName } : {})
+            }
+          : {};
       return {
         stepId: step.id,
         startedAt,
         durationMs: Date.now() - startedAt,
         ...(redactedRequest !== undefined ? { request: redactedRequest } : {}),
-        error: { message },
+        error: { message, ...notSent },
         expectationsPassed: false,
         failedExpectations: [message]
       };

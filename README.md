@@ -68,6 +68,27 @@ steps:
 
 Full step/check reference: [docs/scenario.schema.json](docs/scenario.schema.json).
 
+### Which instance a step goes to
+
+`via:` is optional. When you leave it out in the SPLIT run:
+
+- **A step tagged `check:` crosses instances.** Twin sends it to the instance
+  that *didn't* do the related write (the login, the create, the upload), or,
+  for `restart-persistence`, to the instance that was just restarted.
+- **Any other step stays put.** It goes to the instance where that client's
+  (`as:`) last successful request went, which is where its session lives. Only
+  a client's very first request is round-robined.
+
+So a scenario with no `via:` at all still exercises every switch, and one
+session bug stays one bug. Setup steps don't hop to an instance that has never
+seen the session and collect 401s that cascade through every later check. An
+explicit `via: A` / `via: B` pins a step, and `via: any` round-robins it, exactly
+as written.
+
+A check whose own request was never sent, because an earlier step failed and
+didn't save the `{{var}}` it needs, is reported as `BLOCKED` by that step. It
+is never counted as a bug of its own.
+
 ### Testing more than one user at a time
 
 Each step uses its own cookie jar, picked with `as:`. Jars have to be declared

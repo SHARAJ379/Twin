@@ -17,8 +17,14 @@ export interface RedactedResponse {
 
 export interface StepErrorInfo {
   message: string;
+  /** NOT_SENT when the request failed before it could be sent at all. */
   code?: string | undefined;
+  /** The `{{var}}` that had no value, when that is why the request wasn't sent. */
+  missingVariable?: string | undefined;
 }
+
+/** StepErrorInfo.code for a request that was never sent (it couldn't even be built). */
+export const NOT_SENT = "not-sent";
 
 export interface StepResult {
   stepId: string;

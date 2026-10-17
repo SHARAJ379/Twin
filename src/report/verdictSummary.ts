@@ -11,7 +11,7 @@ export function getsFixPrompt(finding: Finding, findings: readonly Finding[]): b
   if (finding.status !== "fail") return false;
   if (finding.blockedBy === undefined) return true;
   const unblocked = findings.some((f) => f.status === "fail" && f.blockedBy === undefined);
-  return !unblocked && findings.find((f) => f.status === "fail" && f.blockedBy !== undefined) === finding;
+  return !unblocked && findings.find((f) => f.status === "fail" && f.blockedBy === "auth") === finding;
 }
 
 function plural(n: number, word: string): string {
@@ -31,7 +31,7 @@ export function verdictSentence(verdict: Verdict, findings: readonly Finding[]):
       return `${verdict.passed} of ${total} checks passed - this app looks safe to run on more than one instance.`;
     case "unsafe": {
       const bugs = findings.filter((f) => f.status === "fail" && f.blockedBy === undefined).map((f) => f.checkId);
-      const blocked = findings.filter((f) => f.status === "fail" && f.blockedBy !== undefined);
+      const blocked = findings.filter((f) => f.blockedBy !== undefined);
       const found =
         bugs.length > 0
           ? `${plural(bugs.length, "bug")} found (${bugs.join(", ")})`
@@ -44,13 +44,20 @@ export function verdictSentence(verdict: Verdict, findings: readonly Finding[]):
             .join(", ")})`
         );
       }
-      if (verdict.errored > 0) parts.push(`${verdict.errored} errored`);
+      const errored = verdict.errored - findings.filter((f) => f.blockedBy === "dependency").length;
+      if (errored > 0) parts.push(`${errored} errored`);
       return `${parts.join("; ")} - this app is NOT safe to run on more than one instance.`;
     }
     case "inconclusive": {
       const unproven = findings.filter((f) => f.unprovenBy === "shared-local-disk").length;
       if (unproven > 0 && unproven === verdict.errored) {
         return `${plural(unproven, "check")} passed only on a disk both instances share on this machine - NOT proven safe to run on more than one instance (separate servers or containers wouldn't share it).`;
+      }
+      const notSent = findings.filter((f) => f.blockedBy === "dependency");
+      if (notSent.length > 0 && notSent.length === verdict.errored) {
+        return `Twin could not tell: ${verdict.passed} of ${total} checks passed, and ${plural(notSent.length, "check")} couldn't be tested because an earlier step failed (${notSent
+          .map((f) => f.checkId)
+          .join(", ")}). Fix the above and re-run.`;
       }
       return total === 0
         ? "No checks ran - nothing in this scenario is tagged with `check:`, so Twin can't tell you anything about this app yet."
@@ -63,7 +70,7 @@ export function verdictSentence(verdict: Verdict, findings: readonly Finding[]):
 
 /** The status label a finding is shown with. */
 export function statusLabel(finding: Finding): string {
-  if (finding.status === "fail" && finding.blockedBy !== undefined) return "BLOCKED";
+  if (finding.blockedBy !== undefined) return "BLOCKED";
   if (finding.unprovenBy !== undefined) return "NOT PROVEN";
   return finding.status.toUpperCase();
 }

@@ -11,13 +11,13 @@ const BLOCKED_NOTE =
 
 function renderFinding(finding: Finding, findings: readonly Finding[], profile: DeploymentProfile): string[] {
   const lines: string[] = [];
-  const blocked = finding.status === "fail" && finding.blockedBy !== undefined;
+  const blocked = finding.blockedBy !== undefined;
   const label = statusLabel(finding);
   lines.push(`${ICON[finding.status]} ${label.padEnd(7)} ${finding.checkId}`);
   lines.push(`  ${finding.summary}`);
   const prompt = getsFixPrompt(finding, findings);
   if (blocked && !prompt) {
-    lines.push(BLOCKED_NOTE);
+    lines.push(finding.blockedBy === "auth" ? BLOCKED_NOTE : `  blocked: ${"reason" in finding ? finding.reason : ""}`);
     return lines;
   }
 

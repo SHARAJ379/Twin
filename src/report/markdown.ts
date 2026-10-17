@@ -22,12 +22,14 @@ export function renderMarkdownReport(
   ];
 
   for (const finding of findings) {
-    const blocked = finding.status === "fail" && finding.blockedBy !== undefined;
+    const blocked = finding.blockedBy !== undefined;
     const prompt = getsFixPrompt(finding, findings);
     lines.push(`## ${statusLabel(finding)} — ${finding.checkId}`, "", finding.summary, "");
     if (blocked && !prompt) {
       lines.push(
-        "_Blocked: rejected (401/403) on another instance, so this check never reached what it tests. The session bug above is the cause, not a separate one._",
+        finding.blockedBy === "auth"
+          ? "_Blocked: rejected (401/403) on another instance, so this check never reached what it tests. The session bug above is the cause, not a separate one._"
+          : `_Blocked: ${"reason" in finding ? finding.reason : ""}._`,
         ""
       );
       continue;

@@ -46,6 +46,38 @@ export function restartedSinceRelated(scenario: Scenario, assertionIndex: number
   return instances;
 }
 
+/**
+ * Where a step with no `via:` and no `check:` goes: the instance its client's
+ * last successful request went to - where that client's session lives. Only
+ * check steps cross instances (defaultRouteForCheck). Round-robin sent setup
+ * steps across too, so one session bug made `create-note` a 401 on the other
+ * instance, nothing was saved, and every later check failed for that one
+ * reason - reported as three bugs. Undefined (round-robin) before the client
+ * has a successful request, or with a single instance.
+ */
+export function defaultRouteForSetup(
+  scenario: Scenario,
+  stepIndex: number,
+  results: StepResult[],
+  instanceIds: InstanceId[]
+): InstanceId | undefined {
+  const step = scenario.steps[stepIndex];
+  if (step?.kind !== "request" || step.check !== undefined || step.via !== undefined) return undefined;
+  if (instanceIds.length < 2) return undefined;
+
+  const client = step.as ?? "default";
+  const clientOf = new Map(
+    scenario.steps.filter((s): s is RequestStep => s.kind === "request").map((s) => [s.id, s.as ?? "default"] as const)
+  );
+  for (let i = results.length - 1; i >= 0; i--) {
+    const result = results[i]!;
+    if (clientOf.get(result.stepId) !== client) continue;
+    const status = result.response?.status;
+    if (status !== undefined && status < 400 && result.instanceServed !== undefined) return result.instanceServed;
+  }
+  return undefined;
+}
+
 const CROSS_INSTANCE_CHECKS = new Set(["data-consistency", "file-consistency", "session-survives-switch"]);
 
 /**

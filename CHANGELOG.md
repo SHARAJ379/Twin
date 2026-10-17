@@ -9,6 +9,14 @@ shift between minor versions.
 
 ### Fixed
 
+- A step with no `via:` and no `check:` stays on the instance where its client's last successful
+  request went, where its session lives; only check steps cross instances. Round-robin sent a
+  setup step like `create-note` to the instance without the session, so one session bug turned
+  into "3 bugs found". Explicit `via:` (and `via: any`) behave as before.
+- A check whose own request was never sent - an earlier step failed and didn't save the `{{var}}`
+  it needed - is reported as BLOCKED by that step, never as a bug of its own and with no fix
+  prompt. It was reported as failing ("could not be read back (status no response)") and
+  counted in "N bugs found".
 - A Go app's first compile no longer counts against the boot timeout. Once timeouts stopped being
   retried, `go run .` on a cold machine could spend the whole timeout compiling (CI's Windows
   runner did). The Go stack now runs `go build .` as a build step before its detected

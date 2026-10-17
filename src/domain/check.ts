@@ -28,7 +28,12 @@ interface FindingBase {
    * the tracer blames the session layer for these rather than the store the
    * request never got to.
    */
-  blockedBy?: "auth" | undefined;
+  blockedBy?: "auth" | "dependency" | undefined;
+  /**
+   * For "dependency": the step that failed first, so this check's own
+   * request was never sent (always on an "error" finding - never a bug).
+   */
+  blockedByStep?: string | undefined;
   /**
    * Why a check that passed doesn't count as proof (domain/sharedDisk.ts):
    * both instances wrote to a local file outside their own workspaces, which

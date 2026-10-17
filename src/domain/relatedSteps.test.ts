@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultRouteForCheck, resolveRelatedSteps, restartedSinceRelated } from "./relatedSteps.js";
+import { defaultRouteForCheck, defaultRouteForSetup, resolveRelatedSteps, restartedSinceRelated } from "./relatedSteps.js";
 import type { Scenario } from "./scenario.js";
 import type { StepResult } from "./stepResult.js";
 
@@ -117,5 +117,48 @@ describe("defaultRouteForCheck", () => {
     expect(defaultRouteForCheck(steps(), 1, results, ["A"])).toBeUndefined();
     const untagged: Scenario = { ...steps(), steps: steps().steps.map((step) => ({ ...step, check: undefined })) as Scenario["steps"] };
     expect(defaultRouteForCheck(untagged, 1, results, ["A", "B"])).toBeUndefined();
+  });
+});
+
+/**
+ * Found by testing the packed tarball: round-robin sent an unpinned setup
+ * step to the instance without the session, and one session bug cascaded
+ * into every later check.
+ */
+describe("defaultRouteForSetup", () => {
+  const served = (stepId: string, instance: "A" | "B", status: number): StepResult => ({
+    ...stepResult(stepId),
+    instanceServed: instance,
+    response: { status, headers: {} }
+  });
+  const scenario: Scenario = {
+    version: 1,
+    name: "s",
+    steps: [
+      { kind: "request", id: "login", request: { method: "POST", path: "/login" } },
+      { kind: "request", id: "me", request: { method: "GET", path: "/me" }, check: "session-survives-switch" },
+      { kind: "request", id: "create", request: { method: "POST", path: "/notes" } },
+      { kind: "request", id: "bob-login", as: "bob", request: { method: "POST", path: "/login" } },
+      { kind: "request", id: "pinned", via: "B", request: { method: "POST", path: "/x" } },
+      { kind: "request", id: "anywhere", via: "any", request: { method: "POST", path: "/x" } }
+    ]
+  };
+
+  it("keeps a setup step on the instance where the client's last successful request went", () => {
+    expect(defaultRouteForSetup(scenario, 2, [served("login", "A", 200), served("me", "B", 401)], ["A", "B"])).toBe("A");
+    expect(defaultRouteForSetup(scenario, 2, [served("login", "A", 200), served("me", "B", 200)], ["A", "B"])).toBe("B");
+  });
+
+  it("follows each client's own session, and round-robins a client with nothing successful yet", () => {
+    expect(defaultRouteForSetup(scenario, 3, [served("login", "A", 200)], ["A", "B"])).toBeUndefined();
+    expect(defaultRouteForSetup(scenario, 2, [served("login", "A", 500)], ["A", "B"])).toBeUndefined();
+  });
+
+  it("leaves check steps, explicit via: (including via: any) and the single-instance control run alone", () => {
+    const results = [served("login", "A", 200)];
+    expect(defaultRouteForSetup(scenario, 1, results, ["A", "B"])).toBeUndefined();
+    expect(defaultRouteForSetup(scenario, 4, results, ["A", "B"])).toBeUndefined();
+    expect(defaultRouteForSetup(scenario, 5, results, ["A", "B"])).toBeUndefined();
+    expect(defaultRouteForSetup(scenario, 2, results, ["control"])).toBeUndefined();
   });
 });

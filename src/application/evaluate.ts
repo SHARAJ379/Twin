@@ -3,7 +3,7 @@ import type { DeploymentProfile } from "../domain/deploymentProfile.js";
 import { resolveRelatedSteps, restartedSinceRelated } from "../domain/relatedSteps.js";
 import type { RunHistory } from "../domain/responseDivergence.js";
 import type { Scenario } from "../domain/scenario.js";
-import type { StepResult } from "../domain/stepResult.js";
+import { NOT_SENT, type StepResult } from "../domain/stepResult.js";
 import type { WorkspaceDiff } from "../domain/workspaceDiff.js";
 
 export interface EvaluateInput {
@@ -62,6 +62,56 @@ function scenarioIntegrityFinding(input: EvaluateInput): Finding | undefined {
   };
 }
 
+/**
+ * A check whose own request was never sent - a `{{var}}` an earlier step
+ * should have saved, because that step failed. It tested nothing, so it can't
+ * be a failure (or a pass): it is blocked, by the step that failed first. It
+ * used to come out as "could not be read back (status no response)", a bug
+ * of its own, when the one real bug was whatever broke the earlier step.
+ */
+function blockedByDependency(input: EvaluateInput, index: number, assertion: StepResult, title: string): Finding {
+  const step = input.scenario.steps[index]!;
+  const resultById = new Map(input.splitResults.map((r) => [r.stepId, r] as const));
+  const earlier = input.scenario.steps.slice(0, index);
+  const missing = assertion.error?.missingVariable;
+  const saver =
+    missing === undefined
+      ? undefined
+      : [...earlier].reverse().find((s) => s.kind === "request" && s.save !== undefined && missing in s.save);
+  const failedFirst =
+    (saver !== undefined && resultById.get(saver.id)?.expectationsPassed === false ? saver : undefined) ??
+    earlier.find((s) => resultById.get(s.id)?.expectationsPassed === false);
+
+  const dependency = failedFirst === undefined ? undefined : resultById.get(failedFirst.id);
+  const how =
+    dependency === undefined
+      ? ""
+      : dependency.response !== undefined
+        ? ` (status ${dependency.response.status})`
+        : dependency.error !== undefined
+          ? ` (${dependency.error.message})`
+          : "";
+  const cause =
+    failedFirst === undefined
+      ? `${missing !== undefined ? `{{${missing}}} was never saved` : "it couldn't be built"}`
+      : `step "${failedFirst.id}" failed first${how}${missing !== undefined ? ` and never saved {{${missing}}}` : ""}`;
+
+  return {
+    checkId: step.kind === "request" && step.check !== undefined ? step.check : title,
+    status: "error",
+    title,
+    summary: `not tested: this check's request was never sent, because ${cause}`,
+    evidence: [
+      ...(failedFirst !== undefined ? [{ run: "split" as const, stepId: failedFirst.id, note: "failed first" }] : []),
+      { run: "split", stepId: assertion.stepId, note: "never sent" }
+    ],
+    suspects: [],
+    reason: `blocked by ${failedFirst !== undefined ? `step "${failedFirst.id}"` : "an earlier step"} - fix that and this check will run`,
+    blockedBy: "dependency",
+    ...(failedFirst !== undefined ? { blockedByStep: failedFirst.id } : {})
+  };
+}
+
 /** Each run's results for the steps before `index` - the control run has no restart steps, so match by id. */
 function historyBefore(input: EvaluateInput, index: number): RunHistory {
   const earlier = new Set(input.scenario.steps.slice(0, index).map((step) => step.id));
@@ -98,6 +148,11 @@ export function evaluate(input: EvaluateInput): Finding[] {
         suspects: [],
         reason: `no built-in or plugin check is registered for "${step.check}"`
       });
+      return;
+    }
+
+    if (assertion.error?.code === NOT_SENT) {
+      findings.push(blockedByDependency(input, index, assertion, check.title));
       return;
     }
 

@@ -7,6 +7,8 @@ shift between minor versions.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-18
+
 ### Fixed
 
 - On Windows, running Twin against a Go app brought up Windows Firewall's "Do you want to

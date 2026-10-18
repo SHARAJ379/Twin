@@ -457,7 +457,7 @@ checked-out repo and exposes the report as a step output:
 - uses: actions/setup-node@v4      # the Node your app runs on (Twin needs >= 20)
   with:
     node-version: 22
-- uses: SHARAJ379/Twin@v0.1.0
+- uses: SHARAJ379/Twin@v0.1.1
   with:
     project-dir: .
     # install: auto               # the default: npm ci / pip / bundle / composer / go mod download

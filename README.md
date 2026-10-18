@@ -242,12 +242,22 @@ between instances, and which source patterns to blame when a check fails.
 | --- | --- | --- | --- |
 | **Node.js** | `package.json` | `npm start` / `npm run dev` / `serve` | `node_modules` |
 | **Python** | `requirements.txt`, `pyproject.toml`, `Pipfile`, `manage.py` | Django `runserver`, `uvicorn`, `flask run`, or the script itself | `.venv` / `venv` |
-| **Go** | `go.mod` | `go run .`, after a `go build .` build step (so compiling doesn't count against the boot timeout) | *(nothing - compiled)* |
+| **Go** | `go.mod` | `go run .`, carried out as one `go build` per run, before anything boots, with every instance started from that executable (see below) | *(nothing - compiled)* |
 | **Ruby** | `Gemfile`, `config.ru` | `rails server`, `rackup`, or `ruby <script>` | `vendor` |
 | **PHP** | `composer.json`, `artisan`, `index.php` | `artisan serve` or `php -S` | `vendor` |
 
 Python start commands use the project's **own virtualenv interpreter** when there
 is one, since that's where its dependencies live.
+
+Go apps are **compiled once per run**. `go run .` builds a new executable in a new
+temp folder every time, and on Windows the firewall asks about every new executable
+that listens on the network. So for the start command Twin detects (or that `twin
+init` wrote), it runs `go build -o <cache>/twin/bin/<hash of the project path>/<folder
+name>` in the project, before CONTROL and outside every boot timeout, then starts
+each instance from that file. The path never changes for a project, so the firewall
+asks at most once. `<cache>` is `%LOCALAPPDATA%` on Windows, `~/Library/Caches` on
+macOS, and `$XDG_CACHE_HOME` or `~/.cache` elsewhere. Your own `"start"` or `"build"`
+turns this off.
 
 ### The `{{port}}` placeholder
 
@@ -261,6 +271,16 @@ allocated for that instance:
 ```
 
 `--port-env` still works for apps that read it from the environment instead.
+
+### Listening on 127.0.0.1
+
+Twin only ever connects to an instance over `127.0.0.1`, so your app never needs to
+listen on the network. Alongside `PORT`, every instance gets `HOST=127.0.0.1` and
+`BIND_ADDRESS=127.0.0.1`, so an app that reads either one listens on this machine
+only. A value you set yourself wins, whether it's in your shell, a `.env` file,
+`"env"` in `twin.config.json` or `--env`. If your app's listen address is in its
+code, use `127.0.0.1` there during tests. On Windows, listening on every interface is
+what makes the firewall ask about it (see Troubleshooting).
 
 ### Polyglot repos
 
@@ -464,6 +484,7 @@ outright. The common ones:
 | `E_BOOT_CRASH`, "exited (exit code 0) instead of serving" | the start command finished and left nothing running: a one-shot script, or a server that stopped on its own | the log tail says why. If it starts the server in the background, run it in the foreground |
 | `E_BOOT_TIMEOUT`, app seems fine on its own | Twin polls `/health`, your app doesn't serve it | `--health-path /healthz` |
 | `E_BOOT_TIMEOUT`, "it printed nothing at all" | the app was still starting, often compiling (`ts-node`, a custom `go run`) | move the compile into `--build`, which the boot timeout doesn't count, or raise `--boot-timeout-ms` |
+| Windows Firewall asks "Do you want to allow public and private networks to access this app?" during a run | the app listens on every network interface (`0.0.0.0`, Node's `listen(port)`, Go's `ListenAndServe(":"+port)`), and Windows asks about any program that does. Twin itself only connects over `127.0.0.1`, which the firewall never blocks | harmless: Cancel is fine, and the run is unaffected. To stop it, have the app listen on `127.0.0.1` during tests. Twin sets `HOST` and `BIND_ADDRESS` to `127.0.0.1` for apps that read them, and builds a Go app to one path per project, so it asks at most once |
 | `E_BOOT_TIMEOUT`, "is listening on port N, not on port M" | the app doesn't read `PORT` and picks its own port. Twin reads the port from the app's startup line and gives up after one timeout rather than retrying | make the app read `PORT`, or `--port-env APP_PORT`, or put `{{port}}` in `--start` |
 | `scenario-ran-as-written` error | a step didn't match its own `expect:` | fix the route/status in `scenario.yaml` - the message names the step and what it got |
 | `No checks ran` | nothing in the scenario is tagged `check:` | tag the step that reads state back via the *other* instance |

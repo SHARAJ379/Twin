@@ -30,7 +30,7 @@ export default defineConfig({
           // test that has nothing wrong with it. Sequential is slower but honest.
           fileParallelism: false,
           // A single test can boot an instance several times (control, split A+B,
-          // then a restart), and `go run .` compiles on first boot.
+          // then a restart), and a Go app compiles before the first of them.
           testTimeout: 180_000,
           hookTimeout: 60_000
         }

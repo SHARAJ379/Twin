@@ -77,6 +77,8 @@ app.get("/uploads/:filename", requireSession, (req, res) => {
   res.sendFile(filePath);
 });
 
-app.listen(PORT, () => {
+// This machine only: without a host, Node listens on every network interface,
+// which is what makes Windows Firewall ask whether to let the network in.
+app.listen(PORT, "127.0.0.1", () => {
   console.log(`broken-express listening on ${PORT}`);
 });

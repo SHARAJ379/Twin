@@ -48,11 +48,15 @@ export interface StackProfile {
    */
   resolveStartCommand(input: StackDetectionInput): string | undefined;
   /**
-   * Run per workspace before the detected start command, when nothing else
-   * sets a build. For a start command that compiles first (`go run .`): the
-   * build step isn't bounded by the boot timeout, so a cold compile no longer
-   * eats it - a boot timeout isn't retried, and a first `go run` on a slow
-   * runner took longer than the whole timeout.
+   * For a stack whose detected start command compiles the app and runs it in
+   * one step (`go run .`): the command that compiles it to the executable at
+   * `output` instead (already quoted for the shell). When the start command is
+   * that detected one and no build is configured, Twin runs this once per run,
+   * in the project, before CONTROL, and starts every instance from `output`
+   * (see compiledBinary.ts for why that path never changes).
+   *
+   * Compiling there keeps it out of every boot timeout - a timeout isn't
+   * retried, and a cold `go run` on a slow runner took longer than all of it.
    */
-  defaultBuild?: string;
+  compileTo?: (output: string) => string;
 }

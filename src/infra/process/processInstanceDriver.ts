@@ -18,6 +18,7 @@ import type {
 } from "../../ports/instanceDriver.js";
 import type { Logger } from "../../ports/logger.js";
 import type { WorkspaceManager } from "../../ports/workspaceManager.js";
+import { runBuildCommand } from "../build/runBuildCommand.js";
 import { isInstanceAlive } from "./isProcessAlive.js";
 import { killTree } from "./killTree.js";
 import { LogRingBuffer } from "./logRingBuffer.js";
@@ -57,36 +58,7 @@ async function runBuild(
   redactLine?: (line: string) => string
 ): Promise<void> {
   if (build === undefined) return;
-
-  // Redacted like any other captured output: a failing build prints the
-  // environment it was given more often than an app does.
-  const logs = createLogSink({ redactLine });
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(build, { cwd: dir, shell: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
-    child.stdout?.on("data", (chunk: Buffer) => logs.write(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => logs.write(chunk));
-    child.once("error", (err) => {
-      reject(
-        new TwinError("E_BUILD_FAILED", `Failed to run build command \`${build}\` for instance ${instance}.`, {
-          details: { instance },
-          cause: err
-        })
-      );
-    });
-    child.once("exit", (code, signal) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        new TwinError(
-          "E_BUILD_FAILED",
-          `Build command \`${build}\` failed for instance ${instance} (exit code ${code ?? "null"}, signal ${signal ?? "null"}).`,
-          { hint: "Run the build command manually to see the full error.", details: { instance, logTail: logs.lines(30) } }
-        )
-      );
-    });
-  });
+  await runBuildCommand(build, { cwd: dir, target: `instance ${instance}`, details: { instance }, redactLine });
 }
 
 /** True if something (anything) accepts a TCP connection on `port` right now. */

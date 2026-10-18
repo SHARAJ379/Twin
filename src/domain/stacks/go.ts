@@ -105,8 +105,9 @@ export const localFileWriteRule: SuspectRule = {
 };
 
 function resolveStartCommand(input: StackDetectionInput): string | undefined {
-  // Go compiles to a binary, so there's no dependency directory to share and
-  // `go run .` is the portable way in - it builds then runs in one step.
+  // Go compiles to a binary, so there's no dependency directory to share.
+  // `go run .` is how a person would start it - and what `twin init` writes -
+  // but Twin itself compiles once and starts the executable: see compileTo.
   if (!input.entries.includes("go.mod")) return undefined;
   return "go run .";
 }
@@ -116,9 +117,9 @@ export const goStack: StackProfile = {
   displayName: "Go",
   markers: ["go.mod"],
   reads: ["go.mod"],
-  // Compiles into Go's build cache, so `go run .` at boot only has to link.
-  // The binary it leaves lands in the throwaway workspace.
-  defaultBuild: "go build .",
+  // `go run .` links a new executable into a new temp folder on every run,
+  // for every instance, and Windows Firewall asked about each one.
+  compileTo: (output) => `go build -o ${output} .`,
   // Nothing to link: modules live in the shared module cache outside the project.
   linkDirs: [],
   ignoreDirs: ["vendor", "bin"],

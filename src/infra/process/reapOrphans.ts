@@ -16,8 +16,20 @@ export interface ReapResult {
   skippedUnverifiable: PidRecord[];
 }
 
+/**
+ * What a live command line must contain to still be what Twin spawned: the
+ * recorded command's program. One Twin quoted - a compiled app's path, which
+ * can have spaces in it - is matched whole and without its quotes, because sh
+ * can exec it in place of itself, and then the live command line has none.
+ */
 function fingerprint(command: string): string {
-  return command.trim().split(/\s+/)[0] ?? command;
+  const trimmed = command.trim();
+  const quote = trimmed[0];
+  if (quote === '"' || quote === "'") {
+    const end = trimmed.indexOf(quote, 1);
+    if (end > 1) return trimmed.slice(1, end);
+  }
+  return trimmed.split(/\s+/)[0] ?? command;
 }
 
 /**

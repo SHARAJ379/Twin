@@ -7,6 +7,34 @@ shift between minor versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- On Windows, running Twin against a Go app brought up Windows Firewall's "Do you want to
+  allow public and private networks to access this app?" for every instance (control, A, B)
+  on every run. Twin started Go apps with `go run .`, which links a new executable into a
+  new temp folder each time, and the firewall asks about each new executable that listens
+  on the network. Every answer also left firewall rules behind for a path that was already
+  gone, and every `go run` Twin stopped left its temp build folder behind too (one machine
+  had 917 of them, 4.7 GB). Twin now compiles a Go app once per run, with
+  `go build -o <cache>/twin/bin/<hash of the project path>/<folder name>`, and starts every
+  instance from that executable. The path is the same on every run of a project, so an app
+  that does listen on the network is asked about once, ever. The compile still happens
+  outside every boot timeout. A start command of your own, or a `build`, turns it off.
+
+### Added
+
+- Every instance gets `HOST=127.0.0.1` and `BIND_ADDRESS=127.0.0.1` in its environment
+  unless you set them yourself (in your shell, a `.env` file, twin.config.json `"env"` or
+  `--env`), so an app that reads its listen address from either listens only on this
+  machine. Twin only ever connects over `127.0.0.1`.
+
+### Changed
+
+- Every example app listens on `127.0.0.1` only. The Go and Node ones listened on every
+  interface, and a test now fails if any example does.
+- README: a Troubleshooting row for the Windows Firewall prompt (harmless, and Cancel is
+  fine), and sections on listening on `127.0.0.1` and on how Go apps are compiled.
+
 ## [0.1.0] - 2026-10-18
 
 First published release. Everything below is part of it - the sections exist to say what

@@ -273,5 +273,7 @@ func main() {
 	})
 
 	log.Printf("fixed-go listening on %s", port)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	// This machine only: ":"+port would listen on every network interface,
+	// which is what makes Windows Firewall ask whether to let the network in.
+	log.Fatal(http.ListenAndServe("127.0.0.1:"+port, mux))
 }

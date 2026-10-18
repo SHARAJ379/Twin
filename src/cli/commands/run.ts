@@ -10,6 +10,7 @@ import type { DeploymentProfile } from "../../domain/deploymentProfile.js";
 import { collectEnvCandidates, mergeEnvSources } from "../../domain/envSources.js";
 import { TwinError } from "../../domain/errors.js";
 import { collectSecretEnvValues, createLogRedactor } from "../../domain/logRedaction.js";
+import { loopbackHostEnv } from "../../domain/loopbackHost.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
 import { changedPaths, isWithin, localPathsInEnv, markUnprovenByLocalDisk } from "../../domain/sharedDisk.js";
 import {
@@ -17,11 +18,14 @@ import {
   scanForThirdPartyKeys,
   scanSourceForRemoteResources
 } from "../../domain/safetyScan.js";
+import { quoteForShell } from "../../domain/shellQuote.js";
 import type { StackProfile } from "../../domain/stack.js";
 import { genericStack } from "../../domain/stacks/generic.js";
 import { stackProfiles } from "../../domain/stacks/index.js";
 import { computeVerdict } from "../../domain/verdict.js";
 import { FsArtifactStore } from "../../infra/artifacts/fsArtifactStore.js";
+import { prepareCompileOutput } from "../../infra/build/prepareCompileOutput.js";
+import { runBuildCommand } from "../../infra/build/runBuildCommand.js";
 import { loadTwinConfig } from "../../infra/config/loadTwinConfig.js";
 import { DEFAULT_REQUEST_TIMEOUT_MS, HttpScenarioClient } from "../../infra/http/httpScenarioClient.js";
 import { ProcessInstanceDriver } from "../../infra/process/processInstanceDriver.js";
@@ -211,14 +215,13 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     }
     let stack: StackProfile;
     let start: string | undefined;
-    let build = configuredBuild;
+    let detectedStart: string | undefined;
+    const build = configuredBuild;
     try {
       const detected = await detectStack(options.projectDir, options.stack ?? config?.stack);
       stack = detected.profile;
-      start = explicitStart ?? detected.startCommand;
-      // Only alongside the start command the stack itself chose: it's that
-      // command's compile step, and says nothing about one the user wrote.
-      if (build === undefined && start === detected.startCommand) build = stack.defaultBuild;
+      detectedStart = detected.startCommand;
+      start = explicitStart ?? detectedStart;
     } catch (err) {
       const unidentifiable =
         TwinError.isTwinError(err) && (err.code === "E_NO_STACK" || err.code === "E_AMBIGUOUS_STACK");
@@ -239,7 +242,20 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
         }
       );
     }
-    logger.info(`stack: ${stack.displayName}`, { start, ...(build !== undefined ? { build } : {}) });
+    // Only for the start command the stack itself chose (which is also what
+    // `twin init` writes): compiling is that command's job, and says nothing
+    // about one the user wrote - or about one whose build they configured.
+    let compile: string | undefined;
+    if (build === undefined && start === detectedStart && stack.compileTo !== undefined) {
+      const output = quoteForShell(await prepareCompileOutput(options.projectDir, logger), process.platform);
+      compile = stack.compileTo(output);
+      start = output;
+    }
+    logger.info(`stack: ${stack.displayName}`, {
+      start,
+      ...(build !== undefined ? { build } : {}),
+      ...(compile !== undefined ? { compile } : {})
+    });
 
     const run = await store.createRun();
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));
@@ -302,7 +318,16 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       exclude: [options.projectDir, path.join(os.tmpdir(), `twin-${run.id}`), ...declaredShared]
     };
 
-    const startSpec = { command: start, build, portEnv, env: instanceEnv, healthPath, bootTimeoutMs };
+    // HOST and BIND_ADDRESS default to 127.0.0.1, the only address Twin
+    // connects to, so an app that reads one doesn't listen on the network.
+    const startSpec = {
+      command: start,
+      build,
+      portEnv,
+      env: { ...loopbackHostEnv(mergedEnv, process.platform === "win32"), ...instanceEnv },
+      healthPath,
+      bootTimeoutMs
+    };
     const clientOptions = { requestTimeoutMs, redactExtraHeaders };
 
     teardown = async () => {
@@ -328,6 +353,19 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       logger.info(
         'note: the scenario writes real records to the database your app is configured with, and Twin does not remove them - point it at a throwaway one, or set "setup" (e.g. "npm run db:reset") to reset it before each phase'
       );
+    }
+
+    if (compile !== undefined) {
+      // Once, for every instance and every restart, outside every boot
+      // timeout - with the run's "env" and --env, which `go run` compiled with too.
+      logger.info(`build: \`${compile}\``);
+      await runBuildCommand(compile, {
+        cwd: options.projectDir,
+        target: "the project",
+        env: { ...process.env, ...instanceEnv },
+        redactLine: redactLogLine,
+        hint: "Run it in the project to see the full error."
+      });
     }
 
     await runSetup("CONTROL");

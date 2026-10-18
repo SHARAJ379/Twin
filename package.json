@@ -21,7 +21,7 @@
     "node": ">=20"
   },
   "bin": {
-    "twin": "./dist/cli/index.js"
+    "twin": "dist/cli/index.js"
   },
   "files": ["dist", "README.md", "LICENSE"],
   "scripts": {

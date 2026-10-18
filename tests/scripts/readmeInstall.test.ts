@@ -83,16 +83,15 @@ describe("scripts/readmeInstall.mjs", () => {
    */
   it("generates a script that stops at the first failing command", async () => {
     const shell = process.platform === "win32" ? "powershell" : "posix";
-    const readme = await readmeWith(
-      [
-        `<!-- install-check: clone ${shell} -->`,
-        "```",
-        'node -e "process.exit(3)"',
-        `node -e "require('fs').writeFileSync('ran-after-failure', '')"`,
-        'node -e "" doctor',
-        "```"
-      ].join("\n")
-    );
+    // Shell-native commands, not `node -e`: under `npx -p node@20` the `node`
+    // on PATH is the npm "node" package's PowerShell shim, which reports exit
+    // 0 whatever node returned - that would test the shim, not this script.
+    // (npm's own shims, and the `twin` shim npm generates, do pass exit codes on.)
+    const commands =
+      shell === "posix"
+        ? ["false", "touch ran-after-failure", "echo doctor"]
+        : ["cmd /c exit 3", "New-Item -ItemType File ran-after-failure", "cmd /c echo doctor"];
+    const readme = await readmeWith([`<!-- install-check: clone ${shell} -->`, "```", ...commands, "```"].join("\n"));
     const generated = extract("clone", shell, readme);
     expect(generated.code, generated.stderr).toBe(0);
     const scriptFile = path.join(dir, shell === "posix" ? "install.sh" : "install.ps1");

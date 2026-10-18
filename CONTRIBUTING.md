@@ -46,7 +46,10 @@ into a green run that verified nothing - the exact failure mode Twin exists to c
 Publishing is tag-driven. Bump the version in `package.json`, move the changes under a new
 `CHANGELOG.md` heading, then push a matching tag (`v0.2.0`): `.github/workflows/release.yml`
 verifies the tag agrees with `package.json`, runs the pack smoke test, and publishes to npm
-with provenance. It needs an `NPM_TOKEN` repository secret.
+with provenance. It authenticates through npm trusted publishing: the package's settings on
+npmjs.com name this repository's `release.yml` as its publisher, so no npm token is stored
+anywhere. Then it installs the published version from npm on clean Linux and Windows
+runners and runs it.
 
 ## Versioning
 

@@ -35,6 +35,8 @@ shift between minor versions.
   (`DATABASE_URL`, `DB_HOST`, `REDIS_URL`, ...) or a connection string in the env or the
   code. It names that setting. It used to appear on every run without a `setup`, database
   or not.
+- Releases are published through npm trusted publishing (OIDC) from the release workflow,
+  still with provenance. The workflow no longer uses an npm token.
 - Every example app listens on `127.0.0.1` only. The Go and Node ones listened on every
   interface, and a test now fails if any example does.
 - README: a Troubleshooting row for the Windows Firewall prompt (harmless, and Cancel is

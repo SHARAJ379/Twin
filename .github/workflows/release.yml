@@ -8,8 +8,10 @@ name: Release
 # Run it by hand (workflow_dispatch, with a version) to re-check a version
 # that's already on npm. That path publishes nothing.
 #
-# Requires one repository secret, NPM_TOKEN - an npm automation token for the
-# @sharaj379 scope (Settings > Secrets and variables > Actions).
+# No npm token is stored anywhere: @sharaj379/twin trusts this repository's
+# release.yml as its publisher (npm trusted publishing), and `npm publish`
+# authenticates with the job's short-lived OIDC identity. Set up on npmjs.com
+# under the package's Settings > Trusted Publisher.
 on:
   push:
     tags: ["v*"]
@@ -21,7 +23,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # npm provenance signs through this, not through NPM_TOKEN
+  id-token: write # the OIDC identity npm publishes and signs provenance with
 
 jobs:
   publish:
@@ -29,11 +31,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Trusted publishing needs npm 11.5.1+ and Node 22.14+, so this job runs
+      # Node 24 - CI still runs every push on Node 20, the supported floor.
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
-          cache: npm
+          node-version: 24
           registry-url: "https://registry.npmjs.org"
+          # npm's own advice: never use caching in release builds - a poisoned
+          # cache would be published with a valid provenance statement.
+          package-manager-cache: false
+      - name: Check this npm can publish through trusted publishing
+        run: |
+          node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            const ok = major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1)));
+            if (!ok) { console.error(`npm ${process.argv[1]} is older than 11.5.1, which trusted publishing needs`); process.exit(1); }
+          ' "$(npm --version)"
 
       # `npm publish` runs prepublishOnly, which runs the whole suite - and in
       # CI the fixture tests insist on every toolchain they boot apps with
@@ -75,9 +88,9 @@ jobs:
       - run: npm run pack:smoke
 
       # prepublishOnly runs lint + depcheck + typecheck + build + test first.
+      # Authenticates through trusted publishing, and nothing else: there is
+      # deliberately no token here to fall back to.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # What a user gets: `npm install -g` from the registry on a clean machine,
   # then --version, doctor, and a real `twin run`. On Windows the user profile
@@ -130,12 +143,13 @@ jobs:
           Write-Host "npm cache:  $cache"
           if ($prefix -notlike '*Twin Test User*' -or $cache -notlike '*Twin Test User*') { Write-Host "::error::npm isn't using the profile with a space"; exit 1 }
 
-      # A tag can be pushed before the registry serves what was just published.
+      # npm says a new version "is being processed" before it serves it: 0.1.0
+      # took about 3 minutes. Up to 15 minutes, then it's a failure.
       - name: Wait for npm to serve this version, and check it's the latest
         shell: bash
         run: |
           set -u
-          for attempt in $(seq 1 20); do
+          for attempt in $(seq 1 60); do
             got="$(npm view "@sharaj379/twin@$VERSION" version 2>/dev/null || true)"
             [ "$got" = "$VERSION" ] && break
             echo "attempt $attempt: npm doesn't serve $VERSION yet"

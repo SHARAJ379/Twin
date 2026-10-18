@@ -30,6 +30,11 @@ shift between minor versions.
 
 ### Changed
 
+- The note that the scenario writes real records to the app's database, which Twin doesn't
+  remove, only appears when the app has a database configured: an env var named for one
+  (`DATABASE_URL`, `DB_HOST`, `REDIS_URL`, ...) or a connection string in the env or the
+  code. It names that setting. It used to appear on every run without a `setup`, database
+  or not.
 - Every example app listens on `127.0.0.1` only. The Go and Node ones listened on every
   interface, and a test now fails if any example does.
 - README: a Troubleshooting row for the Windows Firewall prompt (harmless, and Cancel is

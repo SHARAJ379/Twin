@@ -436,6 +436,9 @@ export function scanForThirdPartyKeys(env: Readonly<Record<string, string>>): st
     .filter((key) => /^SMTP_/i.test(key) || (THIRD_PARTY_VENDOR_PATTERN.test(key) && CREDENTIAL_NAME_PATTERN.test(key)));
 }
 
+/** A quoted URL-shaped literal in source code; group 1 is the URL. */
+const URL_LITERAL = /["'`]((?:jdbc:)?[a-z][a-z0-9+.-]*:\/\/[^"'`\s]+)["'`]/gi;
+
 /**
  * A connection string written into the code itself:
  * `mongoose.connect("mongodb+srv://...")`. No env scan can see it, and it is
@@ -448,11 +451,10 @@ export function scanSourceForRemoteResources(
   options: { allowedHosts?: readonly string[] } = {}
 ): RemoteResourceRef[] {
   const allowedHosts = options.allowedHosts ?? [];
-  const literal = /["'`]((?:jdbc:)?[a-z][a-z0-9+.-]*:\/\/[^"'`\s]+)["'`]/gi;
   const found: RemoteResourceRef[] = [];
   const seen = new Set<string>();
   for (const file of files) {
-    for (const match of file.content.matchAll(literal)) {
+    for (const match of file.content.matchAll(URL_LITERAL)) {
       const url = match[1]!;
       if (!isDatastoreUrl(url) || /\$\{|\{\{/.test(url)) continue;
       for (const host of hostsIn(url, false)) {
@@ -463,4 +465,29 @@ export function scanSourceForRemoteResources(
     }
   }
   return found;
+}
+
+/**
+ * Every datastore the app is configured with, local ones included: an env var
+ * named for one (DATABASE_URL, DB_HOST, PGHOST, MONGO_URI, REDIS_URL, ...) that
+ * has a value, a connection string under any name, or one written into the
+ * code - the shapes the scans above look for, wherever they point. Those only
+ * care whether a datastore is somewhere real; whether there is one at all is
+ * what decides if "Twin doesn't remove what a run writes" is worth saying.
+ * Named as that note names them: the variable, or the file.
+ */
+export function findDatastoreSettings(
+  candidates: readonly EnvCandidate[],
+  files: readonly { path: string; content: string }[]
+): string[] {
+  const names = new Set<string>();
+  for (const { key, value } of candidates) {
+    if (value.trim().length === 0) continue;
+    if (isHostShapedKey(key) || SUSPICIOUS_KEY_PATTERN.test(key) || isDatastoreUrl(value)) names.add(key);
+  }
+  for (const file of files) {
+    // A templated one counts here: `postgres://${host}/app` is still a database.
+    if ([...file.content.matchAll(URL_LITERAL)].some((match) => isDatastoreUrl(match[1]!))) names.add(file.path);
+  }
+  return [...names];
 }

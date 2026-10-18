@@ -508,7 +508,11 @@ outright. The common ones:
 > (`--env DATABASE_URL=...`), or set `"setup"` in `twin.config.json` to a command
 > that resets one (`"setup": "npm run db:reset"`). Twin runs it in the project before
 > CONTROL and again before SPLIT, so each phase also starts from the same state.
-> The terminal says this on every run that has no `setup`.
+> The terminal says this, naming the setting, whenever your app has a database
+> configured and there's no `setup`. "Configured" means an env var named for one
+> (`DATABASE_URL`, `DB_HOST`, `PGHOST`, `MONGO_URI`, `REDIS_URL`, ...), or a
+> connection string in the env or the code. A database set up any other way, such as
+> Rails' `config/database.yml`, gets no reminder.
 2. **CONTROL** - boots one throwaway instance and runs the whole scenario against it
    alone, proving the scenario/app works before a SPLIT failure gets blamed on
    multi-instance behavior.

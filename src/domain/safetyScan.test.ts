@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { scanForRemoteResources, scanForThirdPartyKeys, scanSourceForRemoteResources } from "./safetyScan.js";
+import { findDatastoreSettings, scanForRemoteResources, scanForThirdPartyKeys, scanSourceForRemoteResources } from "./safetyScan.js";
 
 describe("scanForRemoteResources", () => {
   it("flags a DATABASE_URL pointing at a real host", () => {
@@ -295,4 +295,65 @@ describe("names that can't be a remote production server", () => {
       expect(scanForRemoteResources({ MONGODB_URI: `mongodb://u:p@${host}/app` })).toEqual([]);
     }
   );
+});
+
+/**
+ * What decides whether a run says "Twin doesn't remove what the scenario
+ * writes": whether the app has a datastore at all - local ones included,
+ * which is exactly the dev database that fills up.
+ */
+describe("findDatastoreSettings", () => {
+  const env = (vars: Record<string, string>) => Object.entries(vars).map(([key, value]) => ({ key, value }));
+
+  it("names every datastore setting, local ones included", () => {
+    expect(
+      findDatastoreSettings(
+        env({
+          DATABASE_URL: "postgres://localhost:5432/dev",
+          DB_HOST: "localhost",
+          PGHOST: "127.0.0.1",
+          REDIS_URL: "redis://localhost:6379",
+          PATH: "/usr/bin"
+        }),
+        []
+      )
+    ).toEqual(["DATABASE_URL", "DB_HOST", "PGHOST", "REDIS_URL"]);
+  });
+
+  it("names a connection string whatever the variable is called", () => {
+    expect(findDatastoreSettings(env({ ATLAS_URI: "mongodb+srv://u:p@cluster0.example.net/app", STORE: "postgresql://localhost/x" }), [])).toEqual([
+      "ATLAS_URI",
+      "STORE"
+    ]);
+  });
+
+  it("names nothing for an empty value, an API URL, or the listen address Twin sets", () => {
+    expect(
+      findDatastoreSettings(
+        env({
+          DATABASE_URL: "",
+          GITHUB_API_URL: "https://api.github.com",
+          ANTHROPIC_BASE_URL: "https://api.anthropic.com",
+          HOSTNAME: "runner",
+          HOST: "127.0.0.1",
+          BIND_ADDRESS: "127.0.0.1",
+          PORT: "3000"
+        }),
+        []
+      )
+    ).toEqual([]);
+  });
+
+  it("names a file with a connection string in its code, templated or not", () => {
+    expect(
+      findDatastoreSettings(
+        [],
+        [
+          { path: "db.js", content: 'mongoose.connect("mongodb://localhost:27017/app");' },
+          { path: "cache.py", content: 'client = redis.from_url(f"redis://{host}:6379")' },
+          { path: "api.js", content: 'fetch("https://api.example.com/items");' }
+        ]
+      )
+    ).toEqual(["db.js", "cache.py"]);
+  });
 });

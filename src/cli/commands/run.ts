@@ -14,6 +14,7 @@ import { loopbackHostEnv } from "../../domain/loopbackHost.js";
 import { parseScenarioYaml, type ScenarioParseError } from "../../domain/scenarioParser.js";
 import { changedPaths, isWithin, localPathsInEnv, markUnprovenByLocalDisk } from "../../domain/sharedDisk.js";
 import {
+  findDatastoreSettings,
   scanEnvCandidatesForRemoteResources,
   scanForThirdPartyKeys,
   scanSourceForRemoteResources
@@ -172,8 +173,9 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       options.projectDir,
       stackProfiles.flatMap((profile) => profile.sourceExtensions)
     );
+    const envCandidates = collectEnvCandidates(envSources);
     const remoteRefs = [
-      ...scanEnvCandidatesForRemoteResources(collectEnvCandidates(envSources), { allowedHosts }),
+      ...scanEnvCandidatesForRemoteResources(envCandidates, { allowedHosts }),
       ...scanSourceForRemoteResources(sourceFiles, { allowedHosts })
     ];
     if (remoteRefs.length > 0 && !allowRemote) {
@@ -341,17 +343,21 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       await lock.release();
     });
 
-    // Every run writes real records through the app, into whatever database
-    // it is configured with. Said up front: nothing else would tell the user
-    // their dev database is accumulating test users.
     const runSetup = async (phase: string): Promise<void> => {
       if (setup === undefined) return;
       logger.info(`setup: running \`${setup}\` before ${phase}`);
       await runSetupCommand(setup, { cwd: options.projectDir, env: instanceEnv, phase, redactLine: redactLogLine });
     };
-    if (setup === undefined) {
+    // Every run writes real records through the app, into whatever database
+    // it is configured with. Said up front when it has one: nothing else would
+    // tell the user their dev database is accumulating test users. Said on
+    // every run regardless, it was noise for apps without one - and noise
+    // gets skipped, by the people it's for too.
+    const datastores = findDatastoreSettings(envCandidates, sourceFiles);
+    if (setup === undefined && datastores.length > 0) {
+      const named = `${datastores.slice(0, 3).join(", ")}${datastores.length > 3 ? ` and ${datastores.length - 3} more` : ""}`;
       logger.info(
-        'note: the scenario writes real records to the database your app is configured with, and Twin does not remove them - point it at a throwaway one, or set "setup" (e.g. "npm run db:reset") to reset it before each phase'
+        `note: the app is configured with a database (${named}) - the scenario writes real records to it, and Twin does not remove them. Point it at a throwaway one, or set "setup" (e.g. "npm run db:reset") to reset it before each phase`
       );
     }
 

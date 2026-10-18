@@ -9,6 +9,10 @@ shift between minor versions.
 
 ### Fixed
 
+- A Flask session failure is blamed on its secret key when that key falls back to a random one
+  (`os.environ.get("SECRET_KEY") or os.urandom(24)`, `or secrets.token_hex(...)`, `or uuid4().hex`,
+  or a random default). The rule only knew the bare `secret_key = os.urandom(24)` form, and the
+  failure was blamed on `items = {}`.
 - A step with no `via:` and no `check:` stays on the instance where its client's last successful
   request went, where its session lives; only check steps cross instances. Round-robin sent a
   setup step like `create-note` to the instance without the session, so one session bug turned

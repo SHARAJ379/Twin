@@ -58,8 +58,11 @@ export const moduleCounterRule: SuspectRule = {
 
 // A secret generated at import time differs in every process, so each instance
 // signs cookies with a different key and rejects the others' sessions.
+// Anywhere on the right-hand side, so the "env var, else random" fallbacks
+// count too: `os.environ.get("SECRET_KEY") or os.urandom(24)` is random in
+// every process whenever the variable isn't set - as it isn't under Twin.
 const RANDOM_SECRET_PATTERN =
-  /(secret_key|SECRET_KEY)\s*=\s*(os\.urandom|secrets\.token_(hex|bytes|urlsafe)|uuid\.uuid4|random\.)/;
+  /(secret_key|SECRET_KEY)["']?\]?\s*=.*\b(os\.urandom|secrets\.token_(hex|bytes|urlsafe)|uuid\.uuid4|uuid4\s*\(|random\.)/;
 
 export const randomSecretPerProcessRule: SuspectRule = {
   id: "py-random-secret-key",
@@ -69,8 +72,20 @@ export const randomSecretPerProcessRule: SuspectRule = {
     "a secret key generated at import time is different in every process, so signed session cookies issued by one instance fail validation on another - set it from an env var shared by both",
   test: (line) => RANDOM_SECRET_PATTERN.test(line),
   fixtures: {
-    matches: ["app.secret_key = os.urandom(24)", "SECRET_KEY = secrets.token_hex(32)", "app.secret_key = uuid.uuid4().hex"],
-    nonMatches: ['app.secret_key = os.environ["SECRET_KEY"]', 'SECRET_KEY = os.getenv("SECRET_KEY", "dev")']
+    matches: [
+      "app.secret_key = os.urandom(24)",
+      "SECRET_KEY = secrets.token_hex(32)",
+      "app.secret_key = uuid.uuid4().hex",
+      'app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)',
+      'app.secret_key = os.getenv("SECRET_KEY") or secrets.token_hex(16)',
+      'SECRET_KEY = os.environ.get("SECRET_KEY") or uuid4().hex',
+      'app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", os.urandom(16))'
+    ],
+    nonMatches: [
+      'app.secret_key = os.environ["SECRET_KEY"]',
+      'SECRET_KEY = os.getenv("SECRET_KEY", "dev")',
+      'app.secret_key = os.environ.get("SECRET_KEY") or "dev-secret"'
+    ]
   }
 };
 

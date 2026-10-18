@@ -9,6 +9,8 @@ shift between minor versions.
 
 ### Fixed
 
+- A likely-cause line is listed once, even when it is both runtime evidence and a static rule's
+  match; the duplicate crowded a different suspect out of the three shown.
 - A session failure only names session-specific code as its likely cause - a session store, or a
   container named for sessions or tokens - and says "no confident suspect" when there's none,
   instead of pointing at a data container like `const items = []`.

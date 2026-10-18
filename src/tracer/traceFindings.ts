@@ -176,7 +176,17 @@ export async function traceFindings(
       (s) => isRelevant.has(s.kind) && (!isSessionFailure(finding) || isSessionSpecific(s))
     );
     const requestPath = failingRequestPath(finding, splitById);
-    const suspects = rankSuspects(relevant, relevantKinds, requestPath).slice(0, MAX_SUSPECTS_PER_FINDING);
+    // One line, once: the same line can be both runtime evidence and a static
+    // rule's match, and listing it twice crowded a different suspect out of the cap.
+    const seen = new Set<string>();
+    const suspects = rankSuspects(relevant, relevantKinds, requestPath)
+      .filter((s) => {
+        const key = `${s.file}:${s.line}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, MAX_SUSPECTS_PER_FINDING);
 
     return suspects.length === 0 ? finding : { ...finding, suspects };
   });

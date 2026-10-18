@@ -144,6 +144,18 @@ describe("traceFindings", () => {
     expect(data!.suspects.map((s) => s.snippet)).toContain("const notes = new Map(); let nextId = 1;");
   });
 
+  it("lists a line once even when two rules match it", async () => {
+    // The multer rule and the fs-write rule both match this one line.
+    await writeFile(
+      path.join(projectDir, "server.js"),
+      'const upload = multer({ dest: "uploads/" }); fs.writeFileSync(path.join(__dirname, "x.json"), body);'
+    );
+
+    const [file] = await traceFindings([finding("file-consistency", "fail")], projectDir, [], nodeStack);
+
+    expect(file!.suspects.map((s) => `${s.file}:${s.line}`)).toEqual(["server.js:1"]);
+  });
+
   it("names a local file write for a session failure only when it writes sessions", async () => {
     await writeFile(
       path.join(projectDir, "server.js"),

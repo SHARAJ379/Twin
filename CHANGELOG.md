@@ -7,8 +7,70 @@ shift between minor versions.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-18
+
+First published release. Everything below is part of it - the sections exist to say what
+kind of change each item was, not to imply a version before this one.
+
+### Added
+
+- `twin init` / `twin run` / `twin report` / `twin doctor` / `twin clean`, the
+  CONTROL/SPLIT/EVALUATE/TRACE/REPORT pipeline, and the four built-in checks
+  (`session-survives-switch`, `data-consistency`, `file-consistency`, `restart-persistence`).
+- Stack support for Node.js, Python, Go, Ruby and PHP, each validated end-to-end in CI
+  against real running example apps (`examples/broken-<stack>` / `examples/fixed-<stack>`)
+  in both directions: Twin fails a broken app and passes a correctly stateless one.
+- `--request-timeout-ms` (config: `requestTimeoutMs`, default 30s): a deadline for every
+  scenario request, covering the response body read as well.
+- `--redact-header` (config: `redactHeaders`): extra header names to redact from report
+  evidence.
+- `results.json` per run - the evidence ledger each finding's `{run, stepId}` pointers
+  resolve against, holding every step's request, response and timing from both runs.
+- Named clients: a scenario declares `clients: [alice, bob]` and steps pick one with `as:`.
+- Step-level `retries` and `settleMs`, for a read-back whose write isn't readable the
+  instant it returns. A step runs `retries + 1` times and stops at the first attempt whose
+  expectations pass; `settleMs` waits between attempts only.
+- `--allow-remote-host <host>` (config: `allowRemoteHosts`): vouch for one datastore host instead of
+  switching the whole remote-environment check off. A leading dot is a domain suffix, so
+  `.mongodb.net` covers every shard of a cluster.
+- `SECURITY.md` documenting the trust model and vulnerability reporting process; CodeQL,
+  Dependabot and an `npm audit` gate in CI.
+- `npm run pack:smoke`: packs the tarball, installs it into a clean project and drives the
+  installed binary. Runs in CI on Linux and Windows.
+- A tag-driven release workflow that publishes to npm with provenance.
+- `"setup"` in `twin.config.json` (or `--setup`): a command run in the project before CONTROL and
+  before SPLIT, typically a reset of a throwaway database (`npm run db:reset`), with the
+  instances' env plus `TWIN_PHASE`. A failing setup stops the run with `E_SETUP_FAILED` before
+  anything boots.
+- `report.json` findings carry `blockedBy: "auth"` when the assertion was refused before it
+  reached the subject the check is named after. Additive, so `schemaVersion` stays `1`.
+
+### Changed
+
+- Package renamed to `@sharaj379/twin` on npm (the unscoped `twin` and `twin-cli` names were
+  already taken); the CLI binary itself is still invoked as `twin` after install.
+- Ctrl-C stops the instances it started and removes their temp workspaces before exiting,
+  rather than leaving both for `twin clean`.
+- `as:` must name a declared client. An undeclared one is almost always a typo, and a typo
+  there used to open an empty cookie jar instead of failing - so a scenario that believed it
+  was testing two users was testing one anonymous one, and could still come back green.
+- The published build embeds sources in its source maps, which ship without the `.ts` files.
+
 ### Fixed
 
+- A hung app no longer hangs the run: a response that never arrives, or a stream that never
+  ends, fails its step instead. The proxy 504s a silent instance and drops the upstream
+  request when the client goes away.
+- A crash on boot is reported as soon as the process is gone, instead of waiting out the
+  full boot timeout once per attempt.
+- Temp workspaces are removed when a run fails, not only when it succeeds.
+- An instance that booted is stopped when a later one fails to boot, instead of being left
+  running and holding its port.
+- The SPLIT phase has one teardown path instead of two, so a failure in the stages that sat
+  between them - the before-run snapshots, and the proxy binding its port - no longer returns
+  with the instances still running and the proxy still bound.
+- Instance log capture closes on the child's `close`, not its `exit`, which could truncate
+  the last output and write to an ended stream.
 - A start command that exits 0 is called a hand-off (`E_BOOT_DETACHED`, never retried) only when
   something it started is demonstrably still out there - Twin's pipes still held, or Twin's port
   answering once the process group is gone - and that now also covers a server that answered
@@ -45,18 +107,23 @@ shift between minor versions.
   single "has to be quoted" error as `path: {{id}}`. It's a YAML syntax error there, not a nested
   mapping, and it came out as a dozen raw "Unexpected flow-map-start" errors running on through
   the following lines.
-- The install instructions work, and CI runs them. `npm install -g @sharaj379/twin` is a 404
-  until a release is published, and the README's `@v0.1.0` tag didn't exist. A first fix
-  pointed the README at `npm install -g github:SHARAJ379/Twin`, which fails on every OS: npm
-  builds a git package inside the global install, where its devDependencies (`tsc`,
-  `@types/node`) are never installed. The README now gives two routes that work on npm 10, 11
-  and 12: `npx --allow-git=all github:SHARAJ379/Twin <command>` (npm 12 refuses git packages
-  without `--allow-git`), or clone, `npm install`, `npm run build`, `npm install -g .`, each
-  in macOS/Linux and Windows PowerShell form. A new `Install` workflow extracts those exact
-  commands from README.md and runs them on clean Linux and Windows runners - with each
-  supported Node's own npm and with npm 12, weekly as well as on every push - then runs
-  `--version` and `doctor`. The pack smoke test also installs the tarball globally into a
-  prefix and npm cache whose paths contain spaces.
+- The install instructions work, and CI runs them. The README installs from npm
+  (`npm install -g @sharaj379/twin`, or `npx @sharaj379/twin`), from source (clone,
+  `npm install`, `npm run build`, `npm install -g .`, in macOS/Linux and Windows PowerShell
+  form), or the latest unreleased `master` (`npx --allow-git=all github:SHARAJ379/Twin`: npm
+  12 refuses git packages without `--allow-git`). An interim README line,
+  `npm install -g github:SHARAJ379/Twin`, failed on every OS - npm builds a git package inside
+  the global install, where its devDependencies (`tsc`, `@types/node`) are never installed -
+  and is gone. A new `Install` workflow extracts every install block the README marks and runs
+  it exactly as written on clean Linux and Windows runners, with each supported Node's own npm
+  and with npm 12, weekly as well as on every push, then runs `--version` and `doctor`. The
+  pack smoke test also installs the tarball globally into a prefix and npm cache whose paths
+  contain spaces, and the release workflow installs each published version from npm on clean
+  Linux and Windows runners (the Windows one with a space in the user profile path) and runs
+  it against an example app.
+- The release workflow sets up every language toolchain before `npm publish`. Publishing runs
+  the full test suite, whose fixture tests refuse to skip in CI, so with only Node set up the
+  first release would have failed at its own tests.
 - The GitHub Action no longer forces Node 20 onto the job (it uses the Node on PATH, or the new
   `node-version` input), and installs the project's own dependencies first (new `install` input,
   `auto` by default). Without them, a Node app following the README's snippet ended in
@@ -371,74 +438,6 @@ shift between minor versions.
 - The multi-stack acceptance tests delete the shared state directories they create, instead of
   leaving one per stack per run in the system temp directory.
 
-### Added
-
-- `"setup"` in `twin.config.json` (or `--setup`): a command run in the project before CONTROL and
-  before SPLIT, typically a reset of a throwaway database (`npm run db:reset`), with the
-  instances' env plus `TWIN_PHASE`. A failing setup stops the run with `E_SETUP_FAILED` before
-  anything boots.
-- `report.json` findings carry `blockedBy: "auth"` when the assertion was refused before it
-  reached the subject the check is named after. Additive, so `schemaVersion` stays `1`.
-
-## [0.1.0] - 2026-10-13
-
-First published release. Everything below is part of it - the sections exist to say what
-kind of change each item was, not to imply a version before this one.
-
-### Added
-
-- `twin init` / `twin run` / `twin report` / `twin doctor` / `twin clean`, the
-  CONTROL/SPLIT/EVALUATE/TRACE/REPORT pipeline, and the four built-in checks
-  (`session-survives-switch`, `data-consistency`, `file-consistency`, `restart-persistence`).
-- Stack support for Node.js, Python, Go, Ruby and PHP, each validated end-to-end in CI
-  against real running example apps (`examples/broken-<stack>` / `examples/fixed-<stack>`)
-  in both directions: Twin fails a broken app and passes a correctly stateless one.
-- `--request-timeout-ms` (config: `requestTimeoutMs`, default 30s): a deadline for every
-  scenario request, covering the response body read as well.
-- `--redact-header` (config: `redactHeaders`): extra header names to redact from report
-  evidence.
-- `results.json` per run - the evidence ledger each finding's `{run, stepId}` pointers
-  resolve against, holding every step's request, response and timing from both runs.
-- Named clients: a scenario declares `clients: [alice, bob]` and steps pick one with `as:`.
-- Step-level `retries` and `settleMs`, for a read-back whose write isn't readable the
-  instant it returns. A step runs `retries + 1` times and stops at the first attempt whose
-  expectations pass; `settleMs` waits between attempts only.
-- `--allow-remote-host <host>` (config: `allowRemoteHosts`): vouch for one datastore host instead of
-  switching the whole remote-environment check off. A leading dot is a domain suffix, so
-  `.mongodb.net` covers every shard of a cluster.
-- `SECURITY.md` documenting the trust model and vulnerability reporting process; CodeQL,
-  Dependabot and an `npm audit` gate in CI.
-- `npm run pack:smoke`: packs the tarball, installs it into a clean project and drives the
-  installed binary. Runs in CI on Linux and Windows.
-- A tag-driven release workflow that publishes to npm with provenance.
-
-### Changed
-
-- Package renamed to `@sharaj379/twin` on npm (the unscoped `twin` and `twin-cli` names were
-  already taken); the CLI binary itself is still invoked as `twin` after install.
-- Ctrl-C stops the instances it started and removes their temp workspaces before exiting,
-  rather than leaving both for `twin clean`.
-- `as:` must name a declared client. An undeclared one is almost always a typo, and a typo
-  there used to open an empty cookie jar instead of failing - so a scenario that believed it
-  was testing two users was testing one anonymous one, and could still come back green.
-- The published build embeds sources in its source maps, which ship without the `.ts` files.
-
-### Fixed
-
-- A hung app no longer hangs the run: a response that never arrives, or a stream that never
-  ends, fails its step instead. The proxy 504s a silent instance and drops the upstream
-  request when the client goes away.
-- A crash on boot is reported as soon as the process is gone, instead of waiting out the
-  full boot timeout once per attempt.
-- Temp workspaces are removed when a run fails, not only when it succeeds.
-- An instance that booted is stopped when a later one fails to boot, instead of being left
-  running and holding its port.
-- The SPLIT phase has one teardown path instead of two, so a failure in the stages that sat
-  between them - the before-run snapshots, and the proxy binding its port - no longer returns
-  with the instances still running and the proxy still bound.
-- Instance log capture closes on the child's `close`, not its `exit`, which could truncate
-  the last output and write to an ended stream.
-
 ### Security
 
 - The non-local datastore refusal now also reads split-out settings (`DB_HOST`, libpq's
@@ -454,3 +453,14 @@ kind of change each item was, not to imply a version before this one.
   tokens - before they reach disk or the boot-failure tail printed to the terminal.
 - The GitHub Action passes its inputs through the environment instead of interpolating them
   into a shell script, where an input containing shell metacharacters would have executed.
+
+### Known limitations
+
+- Hardcoded data paths outside the temp directory (for example `/var/lib/app/data.json`) can
+  still pass: in process mode both instances share one disk, and Twin only watches absolute
+  paths it finds in the env and data files directly in the temp directory. Container isolation
+  (planned) is the real fix.
+- A field replaced by a different server-generated value (`"role": "member"` becoming
+  `"anonymous"`) isn't caught unless the scenario itself sent or received the original value.
+- When only `data-consistency` fails, its likely-cause list can include upload code (multer)
+  that belongs to `file-consistency`.

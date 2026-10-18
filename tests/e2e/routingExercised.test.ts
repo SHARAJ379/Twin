@@ -28,12 +28,12 @@ http.createServer((req, res) => {
 }).listen(Number(process.env.PORT), "127.0.0.1");
 `;
 
-const scenario = (readVia: string): string => `name: create-noise-read
+const scenario = (readVia: string, createVia = ""): string => `name: create-noise-read
 version: 1
 steps:
   - id: create
     kind: request
-    request: { method: POST, path: /items }
+${createVia}    request: { method: POST, path: /items }
     expect: { status: 201 }
     save: { itemId: "$.id" }
   - id: noise
@@ -69,11 +69,11 @@ describe("a check whose routing never crossed an instance", () => {
     await rm(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
-  async function run(readVia: string): Promise<{ exitCode: number; finding: { status: string; summary: string } }> {
+  async function run(readVia: string, createVia = ""): Promise<{ exitCode: number; finding: { status: string; summary: string } }> {
     projectDir = await mkdtemp(path.join(os.tmpdir(), "routing-fixture-"));
     await writeFile(path.join(projectDir, "package.json"), JSON.stringify({ name: "routing-fixture", private: true }), "utf8");
     await writeFile(path.join(projectDir, "server.js"), IN_MEMORY_APP, "utf8");
-    await writeFile(path.join(projectDir, "scenario.yaml"), scenario(readVia), "utf8");
+    await writeFile(path.join(projectDir, "scenario.yaml"), scenario(readVia, createVia), "utf8");
 
     const exitCode = await runCommand(
       { ...baseOptions, projectDir, scenarioPath: path.join(projectDir, "scenario.yaml"), env: {} },
@@ -94,9 +94,11 @@ describe("a check whose routing never crossed an instance", () => {
   }, 90_000);
 
   it("never calls a read that stayed on the writing instance a pass", async () => {
-    // `via: any` is an explicit choice, so it isn't rerouted - and with the
-    // noise step in between, round-robin lands it back on the writer.
-    const { exitCode, finding } = await run("    via: any\n");
+    // An explicit via: is the scenario's own choice, so it isn't rerouted -
+    // and here it pins the read to the instance that did the write. (This
+    // used to rely on round-robin landing a `via: any` read back on the
+    // writer; unpinned setup steps no longer move the round-robin.)
+    const { exitCode, finding } = await run("    via: A\n", "    via: A\n");
     expect(finding.status).toBe("error");
     expect(finding.summary).toContain("same instance as the write");
     expect(exitCode).not.toBe(0);

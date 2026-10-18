@@ -2,13 +2,22 @@ name: Release
 
 # Publishing is tag-driven: push v0.1.0 and this publishes 0.1.0 to npm with
 # provenance, so the registry can attest the tarball was built from this repo
-# at this commit.
+# at this commit. Then it installs what was published, from the registry, on
+# clean Linux and Windows runners and drives it.
+#
+# Run it by hand (workflow_dispatch, with a version) to re-check a version
+# that's already on npm. That path publishes nothing.
 #
 # Requires one repository secret, NPM_TOKEN - an npm automation token for the
 # @sharaj379 scope (Settings > Secrets and variables > Actions).
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "An already-published version to verify, e.g. 0.1.0. Nothing is published."
+        required: true
 
 permissions:
   contents: read
@@ -16,6 +25,7 @@ permissions:
 
 jobs:
   publish:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,7 +35,27 @@ jobs:
           cache: npm
           registry-url: "https://registry.npmjs.org"
 
+      # `npm publish` runs prepublishOnly, which runs the whole suite - and in
+      # CI the fixture tests insist on every toolchain they boot apps with
+      # (tests/e2e/helpers/fixtureRequirements.ts), so this is the same setup
+      # as ci.yml's verify job. Without it, publishing failed at the tests.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install flask
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ">=1.22"
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+
       - run: npm ci
+      - run: npm ci --prefix examples/broken-express
+      - run: npm ci --prefix examples/fixed-express
 
       # A tag that disagrees with package.json publishes the wrong version
       # under the right name, which can't be taken back.
@@ -48,3 +78,116 @@ jobs:
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # What a user gets: `npm install -g` from the registry on a clean machine,
+  # then --version, doctor, and a real `twin run`. On Windows the user profile
+  # has a space in it, as on many real machines ("C:\Users\Jane Doe"), so npm's
+  # global folder and cache - and every shim path - do too.
+  verify:
+    needs: publish
+    if: always() && (needs.publish.result == 'success' || github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7 # for examples/fixed-express; Twin itself comes from npm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Which version
+        shell: bash
+        env:
+          WANTED: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+        run: echo "VERSION=${WANTED#v}" >> "$GITHUB_ENV"
+
+      - name: Give the user profile a space in its path
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $root = 'C:\Users\Twin Test User'
+          $roaming = Join-Path $root 'AppData\Roaming'
+          $local = Join-Path $root 'AppData\Local'
+          # Where a default Node install puts npm's global folder and cache for this profile.
+          $prefix = Join-Path $roaming 'npm'
+          $cache = Join-Path $local 'npm-cache'
+          New-Item -ItemType Directory -Force -Path $prefix, $cache | Out-Null
+          Add-Content $env:GITHUB_ENV "USERPROFILE=$root"
+          Add-Content $env:GITHUB_ENV "APPDATA=$roaming"
+          Add-Content $env:GITHUB_ENV "LOCALAPPDATA=$local"
+          Add-Content $env:GITHUB_ENV "npm_config_prefix=$prefix"
+          Add-Content $env:GITHUB_ENV "npm_config_cache=$cache"
+          Add-Content $env:GITHUB_PATH $prefix
+      - name: Check npm's global folder and cache really have a space in them
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $prefix = npm config get prefix
+          $cache = npm config get cache
+          Write-Host "npm prefix: $prefix"
+          Write-Host "npm cache:  $cache"
+          if ($prefix -notlike '*Twin Test User*' -or $cache -notlike '*Twin Test User*') { Write-Host "::error::npm isn't using the profile with a space"; exit 1 }
+
+      # A tag can be pushed before the registry serves what was just published.
+      - name: Wait for npm to serve this version, and check it's the latest
+        shell: bash
+        run: |
+          set -u
+          for attempt in $(seq 1 20); do
+            got="$(npm view "@sharaj379/twin@$VERSION" version 2>/dev/null || true)"
+            [ "$got" = "$VERSION" ] && break
+            echo "attempt $attempt: npm doesn't serve $VERSION yet"
+            sleep 15
+          done
+          [ "$got" = "$VERSION" ] || { echo "::error::npm never served @sharaj379/twin@$VERSION"; exit 1; }
+          latest="$(npm view @sharaj379/twin version)"
+          echo "npm view @sharaj379/twin version: $latest"
+          [ "$latest" = "$VERSION" ] || { echo "::error::latest is $latest, not $VERSION"; exit 1; }
+
+      - name: Install it and check it (bash)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g @sharaj379/twin
+          echo "twin is $(command -v twin)"
+          [ "$(twin --version)" = "$VERSION" ] || { echo "::error::twin --version printed $(twin --version), not $VERSION"; exit 1; }
+          twin doctor
+      - name: Install it and check it (Windows PowerShell)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          npm install -g @sharaj379/twin
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $twin = (Get-Command twin).Source
+          Write-Host "twin is $twin"
+          if ($twin -notlike '*Twin Test User*') { Write-Host "::error::twin resolved outside the profile with a space"; exit 1 }
+          $printed = twin --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if ($printed -ne $env:VERSION) { Write-Host "::error::twin --version printed $printed, not $env:VERSION"; exit 1 }
+          twin doctor
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # fixed-express keeps its sessions, records and uploads where both
+      # instances reach them, so the installed Twin must pass it: exit 0.
+      - name: twin run on examples/fixed-express (bash)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: examples/fixed-express
+        run: |
+          set -uo pipefail
+          npm ci
+          code=0
+          twin run || code=$?
+          [ "$code" = 0 ] || { echo "::error::twin run exited $code, expected 0"; exit 1; }
+      - name: twin run on examples/fixed-express (Windows PowerShell)
+        if: runner.os == 'Windows'
+        shell: powershell
+        working-directory: examples/fixed-express
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          twin run
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::twin run exited $LASTEXITCODE, expected 0"; exit 1 }

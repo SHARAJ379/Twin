@@ -103,6 +103,23 @@ async function isPortHeldBySomeoneElse(port: number): Promise<boolean> {
   });
 }
 
+/**
+ * How long a start command that exited 0 gets for a server it handed off to
+ * show up on its port. A daemonizer (`pm2 start`) returns before its server
+ * has bound anything.
+ */
+const ESCAPE_GRACE_MS = 2_000;
+
+/** Whether something answers `port` within `ms`. */
+async function portAnswersWithin(port: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (await isPortHeldBySomeoneElse(port)) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(100);
+  }
+}
+
 async function pollHealth(
   baseUrl: string,
   healthPath: string,
@@ -376,16 +393,24 @@ export class ProcessInstanceDriver implements InstanceDriver {
       const handedOff = !stdioClosed;
       releaseStdio();
 
-      if (alreadyDead && spawnError === undefined && (exitCode === 0 || handedOff)) {
+      // A hand-off needs evidence that something is still out there: our
+      // pipes still held, or our port answering once our whole process group
+      // is gone. Exit code 0 alone isn't that - an app that simply stops looks
+      // the same, and treating it as a hand-off made a one-off early exit
+      // (seen on a macOS CI runner, with nothing escaped) a failure that
+      // wasn't retried.
+      const escaped =
+        alreadyDead &&
+        spawnError === undefined &&
+        (handedOff || (exitCode === 0 && (await portAnswersWithin(port, ESCAPE_GRACE_MS))));
+      if (escaped) {
         throw new TwinError(
           "E_BOOT_DETACHED",
           `\`${spec.command}\` exited${exitCode === 0 ? " successfully" : ""} instead of staying in the foreground, so instance ${
             ws.instance
           } never served from a process Twin can see or stop.`,
           {
-            hint:
-              "Twin has to own the server process to restart it and clean it up. Run it in the foreground: drop a trailing `&`, use `pm2-runtime start` rather than `pm2 start`, and leave off any --daemon / -d flag." +
-              (handedOff ? " The server may still be running outside Twin - check its port and stop it yourself." : ""),
+            hint: `Twin has to own the server process to restart it and clean it up. Run it in the foreground: drop a trailing \`&\`, use \`pm2-runtime start\` rather than \`pm2 start\`, and leave off any --daemon / -d flag. The server may still be running outside Twin - check port ${port} and stop it yourself.`,
             details: { instance: ws.instance, port, logTail: logs.lines(30) },
             cause: err
           }
@@ -442,11 +467,15 @@ export class ProcessInstanceDriver implements InstanceDriver {
       throw new TwinError(
         alreadyDead ? "E_BOOT_CRASH" : "E_BOOT_TIMEOUT",
         alreadyDead
-          ? `Instance ${ws.instance} crashed on boot${exitInfo.length > 0 ? ` (${exitInfo})` : ""}.`
+          ? exitCode === 0
+            ? `Instance ${ws.instance} exited (exit code 0) instead of serving.`
+            : `Instance ${ws.instance} crashed on boot${exitInfo.length > 0 ? ` (${exitInfo})` : ""}.`
           : `Instance ${ws.instance} did not become healthy within ${spec.bootTimeoutMs}ms.`,
         {
           hint: alreadyDead
-            ? `\`${spec.command}\` exited instead of serving. If the app needs compiling first, pass --build "<command>". The log tail below is the app's own output.`
+            ? exitCode === 0
+              ? `\`${spec.command}\` finished instead of running a server. If it starts the server in the background or hands it to a daemon (\`pm2 start\`, --daemon), run it in the foreground instead; otherwise the log tail below is the app's own account of why it stopped.`
+              : `\`${spec.command}\` exited instead of serving. If the app needs compiling first, pass --build "<command>". The log tail below is the app's own output.`
             : `The app started but never answered ${spec.healthPath} with a non-5xx status. Check --health-path (is it really ${spec.healthPath}?) and --port-env (does the app read ${spec.portEnv}?).${
                 logs.lines(1).length === 0
                   ? " It printed nothing at all, which usually means it was still starting up - compiling, say (`go run`, `ts-node`): move that into --build, which the boot timeout doesn't count, or raise --boot-timeout-ms."
@@ -465,7 +494,21 @@ export class ProcessInstanceDriver implements InstanceDriver {
       await killTree(pid, { mode: "crash", graceMs: 0 });
       if (!instanceAlive()) await forgetInstance();
       await awaitLogs();
+      const handedOff = !stdioClosed;
       releaseStdio();
+      // It answered health, and now our whole group is gone: if the port
+      // still answers, what answered was a server running outside Twin -
+      // `pm2 start` and friends land here when the server binds quickly.
+      if (spawnError === undefined && (handedOff || (await isPortHeldBySomeoneElse(port)))) {
+        throw new TwinError(
+          "E_BOOT_DETACHED",
+          `\`${spec.command}\` exited instead of staying in the foreground, so instance ${ws.instance} answered from a process Twin can't see or stop.`,
+          {
+            hint: `Twin has to own the server process to restart it and clean it up. Run it in the foreground: drop a trailing \`&\`, use \`pm2-runtime start\` rather than \`pm2 start\`, and leave off any --daemon / -d flag. The server is probably still running outside Twin - check port ${port} and stop it yourself.`,
+            details: { instance: ws.instance, port, logTail: logs.lines(30) }
+          }
+        );
+      }
       throw new TwinError(
         "E_BOOT_CRASH",
         `Instance ${ws.instance} exited right after reporting healthy (${exitInfo}).`,

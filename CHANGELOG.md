@@ -9,6 +9,12 @@ shift between minor versions.
 
 ### Fixed
 
+- A start command that exits 0 is called a hand-off (`E_BOOT_DETACHED`, never retried) only when
+  something it started is demonstrably still out there - Twin's pipes still held, or Twin's port
+  answering once the process group is gone - and that now also covers a server that answered
+  health before its launcher exited. An exit 0 that leaves nothing behind is a crash ("exited (exit
+  code 0) instead of serving") and is retried, as before. Exit code 0 alone was taken as proof of a
+  hand-off, which turned a one-off early exit on a macOS CI runner into an unretried failure.
 - A likely-cause line is listed once, even when it is both runtime evidence and a static rule's
   match; the duplicate crowded a different suspect out of the three shown.
 - A session failure only names session-specific code as its likely cause - a session store, or a

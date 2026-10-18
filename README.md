@@ -446,7 +446,8 @@ outright. The common ones:
 | symptom | cause | fix |
 | --- | --- | --- |
 | `E_BOOT_CRASH`, log says `Cannot find module .../dist/...` | the app compiles before it runs | `--build "npm run build"` (or set `"build"` in `twin.config.json`) |
-| `E_BOOT_DETACHED` | the start command hands the server off and exits (`pm2 start`, `--daemon`) | run it in the foreground: `pm2-runtime start`, no daemon flag |
+| `E_BOOT_DETACHED` | the start command handed the server off and exited (`pm2 start`, `--daemon`). Twin says this only when something it didn't start still holds its output or serves its port | run it in the foreground: `pm2-runtime start`, no daemon flag. Stop the leftover server yourself |
+| `E_BOOT_CRASH`, "exited (exit code 0) instead of serving" | the start command finished and left nothing running: a one-shot script, or a server that stopped on its own | the log tail says why. If it starts the server in the background, run it in the foreground |
 | `E_BOOT_TIMEOUT`, app seems fine on its own | Twin polls `/health`, your app doesn't serve it | `--health-path /healthz` |
 | `E_BOOT_TIMEOUT`, "it printed nothing at all" | the app was still starting, often compiling (`ts-node`, a custom `go run`) | move the compile into `--build`, which the boot timeout doesn't count, or raise `--boot-timeout-ms` |
 | `E_BOOT_TIMEOUT`, "is listening on port N, not on port M" | the app doesn't read `PORT` and picks its own port. Twin reads the port from the app's startup line and gives up after one timeout rather than retrying | make the app read `PORT`, or `--port-env APP_PORT`, or put `{{port}}` in `--start` |

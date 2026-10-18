@@ -233,6 +233,19 @@ child.unref();
 `;
 
 /**
+ * Hands the server off like DAEMONIZING_LAUNCHER, but with no stdio of ours -
+ * as `pm2 start` does - so the only evidence left behind is the server that
+ * binds Twin's port a moment later.
+ */
+const QUIET_LAUNCHER = `
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const child = spawn(process.execPath, ["s.js"], { detached: true, stdio: "ignore" });
+fs.writeFileSync("escaped.pid", String(child.pid));
+child.unref();
+`;
+
+/**
  * Reported by an external audit with \`--start "node s.js &"\`: Twin called a
  * server that was booting fine a crash ("exit code 0"), three times; skipped
  * killing the process group because its leader was "already dead"; dropped
@@ -252,6 +265,8 @@ describe("ProcessInstanceDriver: start commands that background the server", () 
     pidFile = path.join(root, "pids.json");
     await writeFile(path.join(source, "s.js"), SLOW_SERVER, "utf8");
     await writeFile(path.join(source, "launch.js"), DAEMONIZING_LAUNCHER, "utf8");
+    await writeFile(path.join(source, "launch-quiet.js"), QUIET_LAUNCHER, "utf8");
+    await writeFile(path.join(source, "quit.js"), `console.log("nothing to serve");`, "utf8");
     driver = new ProcessInstanceDriver(new FsWorkspaceManager(root), logger, pidFile);
   });
 
@@ -286,6 +301,38 @@ describe("ProcessInstanceDriver: start commands that background the server", () 
       if (escaped > 0 && isProcessAlive(escaped)) process.kill(escaped);
     }
   }, 30_000);
+
+  it("calls it a hand-off when the server shows up on Twin's port, even holding none of its pipes", async () => {
+    const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });
+    const spawned = vi.spyOn(driver as unknown as { spawnOnce: () => Promise<unknown> }, "spawnOnce");
+
+    const err = await driver.start(ws, spec("node launch-quiet.js")).catch((e: unknown) => e);
+    try {
+      expect(TwinError.isTwinError(err) && err.code).toBe("E_BOOT_DETACHED");
+      expect((err as TwinError).hint).toMatch(/running outside Twin - check port \d+/);
+      expect(spawned).toHaveBeenCalledTimes(1);
+    } finally {
+      const escaped = Number(await readFile(path.join(ws.dir, "escaped.pid"), "utf8").catch(() => "0"));
+      if (escaped > 0 && isProcessAlive(escaped)) process.kill(escaped);
+    }
+  }, 30_000);
+
+  /**
+   * Found by CI (macos-latest, Node 20): `npm start` printed "listening" and
+   * then exited 0 with nothing left running - group gone, pipes closed, port
+   * refused - and Twin reported a hand-off to a daemon, which it never
+   * retries. Exit code 0 alone is no evidence anything escaped.
+   */
+  it("calls an exit 0 that leaves nothing behind a crash, and retries it", async () => {
+    const ws = await driver.prepare({ instance: "A", sourceDir: source, link: [], ignore: [] });
+    const spawned = vi.spyOn(driver as unknown as { spawnOnce: () => Promise<unknown> }, "spawnOnce");
+
+    const err = await driver.start(ws, spec("node quit.js")).catch((e: unknown) => e);
+    expect(TwinError.isTwinError(err) && err.code).toBe("E_BOOT_CRASH");
+    expect((err as TwinError).message).toContain("exited (exit code 0) instead of serving");
+    expect((err as TwinError).hint).toContain("pm2 start");
+    expect(spawned).toHaveBeenCalledTimes(3);
+  }, 60_000);
 });
 
 /**

@@ -87,10 +87,13 @@ describe("scripts/readmeInstall.mjs", () => {
     // on PATH is the npm "node" package's PowerShell shim, which reports exit
     // 0 whatever node returned - that would test the shim, not this script.
     // (npm's own shims, and the `twin` shim npm generates, do pass exit codes on.)
+    // And `cmd.exe`, not `cmd`: CI's Ruby setup puts MSYS2's usr\bin on PATH,
+    // whose extensionless `cmd` PowerShell finds first and merely opens -
+    // nothing runs, and no exit code is set.
     const commands =
       shell === "posix"
         ? ["false", "touch ran-after-failure", "echo doctor"]
-        : ["cmd /c exit 3", "New-Item -ItemType File ran-after-failure", "cmd /c echo doctor"];
+        : ["cmd.exe /c exit 3", "New-Item -ItemType File ran-after-failure", "cmd.exe /c echo doctor"];
     const readme = await readmeWith([`<!-- install-check: clone ${shell} -->`, "```", ...commands, "```"].join("\n"));
     const generated = extract("clone", shell, readme);
     expect(generated.code, generated.stderr).toBe(0);

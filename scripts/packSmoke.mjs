@@ -143,6 +143,27 @@ try {
     `exit ${String(noScenario.code)}\n${noScenario.stdout}${noScenario.stderr}`
   );
 
+  // `npm install -g` is how the README will tell people to install it, and
+  // on Windows the global prefix and npm cache live under the user profile -
+  // which often has a space in it ("C:\Users\Jane Doe"). So this installs
+  // globally into a prefix and cache whose paths contain spaces, and drives
+  // the global `twin` shim itself, through a shell, as a terminal would.
+  console.log("\ninstalling the tarball globally, into paths with spaces in them");
+  const prefix = path.join(workDir, "global prefix with spaces");
+  const cache = path.join(workDir, "npm cache with spaces");
+  npmRun(["install", "-g", tarball, "--prefix", prefix, "--cache", cache, "--no-audit", "--no-fund", "--loglevel=error"], workDir);
+  const globalShim = process.platform === "win32" ? path.join(prefix, "twin.cmd") : path.join(prefix, "bin", "twin");
+  check(existsSync(globalShim), "npm created the global `twin` shim in a prefix whose path has spaces");
+  const viaShim = (args) => settle(spawnSync(`"${globalShim}" ${args}`, { encoding: "utf8", shell: true, cwd: workDir }));
+  const globalVersion = viaShim("--version");
+  check(
+    globalVersion.code === 0 && globalVersion.stdout.trim() === pkg.version,
+    `the global shim runs --version from a path with spaces (${pkg.version})`,
+    globalVersion.stdout + globalVersion.stderr
+  );
+  const globalDoctor = viaShim("doctor");
+  check(globalDoctor.code === 0, "the global shim runs doctor from a path with spaces", globalDoctor.stdout + globalDoctor.stderr);
+
   const initProject = path.join(workDir, "init-project");
   await mkdir(initProject, { recursive: true });
   writeFileSync(

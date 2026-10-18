@@ -39,10 +39,18 @@ shift between minor versions.
   single "has to be quoted" error as `path: {{id}}`. It's a YAML syntax error there, not a nested
   mapping, and it came out as a dozen raw "Unexpected flow-map-start" errors running on through
   the following lines.
-- The install instructions work. `npm install -g @sharaj379/twin` is a 404 until a release is
-  published, and the README's `@v0.1.0` tag didn't exist; the README now installs from GitHub
-  (`npm install -g github:SHARAJ379/Twin`, marked pre-release), which a new `prepare` script
-  builds on install.
+- The install instructions work, and CI runs them. `npm install -g @sharaj379/twin` is a 404
+  until a release is published, and the README's `@v0.1.0` tag didn't exist. A first fix
+  pointed the README at `npm install -g github:SHARAJ379/Twin`, which fails on every OS: npm
+  builds a git package inside the global install, where its devDependencies (`tsc`,
+  `@types/node`) are never installed. The README now gives two routes that work on npm 10, 11
+  and 12: `npx --allow-git=all github:SHARAJ379/Twin <command>` (npm 12 refuses git packages
+  without `--allow-git`), or clone, `npm install`, `npm run build`, `npm install -g .`, each
+  in macOS/Linux and Windows PowerShell form. A new `Install` workflow extracts those exact
+  commands from README.md and runs them on clean Linux and Windows runners - with each
+  supported Node's own npm and with npm 12, weekly as well as on every push - then runs
+  `--version` and `doctor`. The pack smoke test also installs the tarball globally into a
+  prefix and npm cache whose paths contain spaces.
 - The GitHub Action no longer forces Node 20 onto the job (it uses the Node on PATH, or the new
   `node-version` input), and installs the project's own dependencies first (new `install` input,
   `auto` by default). Without them, a Node app following the README's snippet ended in

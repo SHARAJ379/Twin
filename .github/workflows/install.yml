@@ -1,0 +1,110 @@
+name: Install
+
+# Runs the README's install commands exactly as written, on clean runners, then
+# `--version` and `doctor` - so the moment the README's install line stops
+# working, this goes red. It once said `npm install -g github:SHARAJ379/Twin`,
+# which fails on every OS, and nothing ran it: the pack smoke test installs a
+# tarball, and the Action job builds from a checkout.
+#
+# The commands come out of README.md itself (scripts/readmeInstall.mjs), so
+# this can't drift from what users copy. They fetch Twin from GitHub - whatever
+# master is, which is what someone following the README gets right now. On a
+# pull request that's master, not the PR; the push that merges it runs this
+# again. The weekly run catches what changes without a push of ours: npm 12,
+# for one, started refusing git packages unless --allow-git is given.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readme:
+    name: README install (${{ matrix.os }}, Node ${{ matrix.node }}, npm ${{ matrix.npm }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        # The npm each supported Node ships with, plus the newest npm, which
+        # is the strictest about git packages and install scripts.
+        variant: [bundled-20, bundled-24, npm-12]
+        include:
+          - variant: bundled-20
+            node: 20
+            npm: 10
+          - variant: bundled-24
+            node: 24
+            npm: 11
+          - variant: npm-12
+            node: 22 # npm 12 needs Node >= 22.22.2
+            npm: 12
+            upgrade-npm: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Only for README.md and the script that reads it. Nothing is installed
+      # from this checkout: the README's commands fetch Twin themselves.
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Upgrade npm
+        if: matrix.upgrade-npm
+        shell: bash
+        env:
+          NPM_MAJOR: ${{ matrix.npm }}
+        run: npm install -g "npm@$NPM_MAJOR"
+
+      # The Node installer puts npm's global bin directory on PATH; a runner's
+      # Node doesn't promise to, and `twin` lands there.
+      - name: Put npm's global bin directory on PATH
+        shell: bash
+        run: |
+          prefix="$(npm config get prefix)"
+          if [ "$RUNNER_OS" = "Windows" ]; then echo "$prefix" >> "$GITHUB_PATH"; else echo "$prefix/bin" >> "$GITHUB_PATH"; fi
+
+      - name: Check the npm under test is the one intended
+        shell: bash
+        env:
+          NPM_MAJOR: ${{ matrix.npm }}
+        run: |
+          echo "node $(node --version), npm $(npm --version)"
+          [ "$(npm --version | cut -d. -f1)" = "$NPM_MAJOR" ] || { echo "expected npm $NPM_MAJOR"; exit 1; }
+
+      - name: Write the README's install commands out as scripts
+        shell: bash
+        run: |
+          for route in npx clone; do
+            node scripts/readmeInstall.mjs "$route" posix > "$RUNNER_TEMP/$route.sh"
+            node scripts/readmeInstall.mjs "$route" powershell > "$RUNNER_TEMP/$route.ps1"
+            mkdir "$RUNNER_TEMP/$route"
+          done
+
+      - name: "README: run it without installing (bash)"
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{ runner.temp }}/npx
+        run: bash "$RUNNER_TEMP/npx.sh"
+      - name: "README: install a twin command (bash)"
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{ runner.temp }}/clone
+        run: bash "$RUNNER_TEMP/clone.sh"
+
+      # Windows PowerShell 5.1, the one every Windows machine has - not pwsh.
+      - name: "README: run it without installing (Windows PowerShell)"
+        if: runner.os == 'Windows'
+        shell: powershell
+        working-directory: ${{ runner.temp }}/npx
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\npx.ps1"
+      - name: "README: install a twin command (Windows PowerShell)"
+        if: runner.os == 'Windows'
+        shell: powershell
+        working-directory: ${{ runner.temp }}/clone
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\clone.ps1"

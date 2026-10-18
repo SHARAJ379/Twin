@@ -30,6 +30,31 @@ const RELEVANT_KINDS: Record<string, SuspectKind[]> = {
  */
 const AUTH_BLOCKED_KINDS: SuspectKind[] = ["memory-session-store", "module-state"];
 
+/** A container whose name says it holds sessions or logins: `sessions = {}`, `const tokens = new Map()`. */
+const SESSION_NAME = /sess|sid|token|auth|login|jwt|cookie/i;
+
+/** The variable a suspect's line declares or assigns, if it has one. */
+function declaredName(snippet: string): string | undefined {
+  return /^(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*(?::[^=]*)?=/.exec(snippet)?.[1];
+}
+
+/**
+ * Whether a suspect can explain a *session* failure. A session-store rule
+ * can; a plain module-level container only when its name says it holds
+ * sessions. `const items = []` was listed as a session failure's likely
+ * cause - pointing someone at their data store to fix their login.
+ */
+function isSessionSpecific(suspect: Suspect): boolean {
+  if (suspect.kind === "memory-session-store") return true;
+  if (suspect.kind !== "module-state") return false;
+  const name = declaredName(suspect.snippet);
+  return name !== undefined && SESSION_NAME.test(name);
+}
+
+function isSessionFailure(finding: Finding): boolean {
+  return finding.checkId === "session-survives-switch" || finding.blockedBy === "auth";
+}
+
 function relevantKindsFor(finding: Finding): SuspectKind[] {
   if (finding.blockedBy === "auth") return AUTH_BLOCKED_KINDS;
   return RELEVANT_KINDS[finding.checkId] ?? [];
@@ -142,7 +167,11 @@ export async function traceFindings(
     if (relevantKinds.length === 0) return finding;
     const isRelevant = new Set(relevantKinds);
 
-    const relevant = [...dynamicSuspects, ...staticSuspects].filter((s) => isRelevant.has(s.kind));
+    // A session failure only names session-specific code, or nothing at all:
+    // no confident suspect beats a confident-looking wrong one.
+    const relevant = [...dynamicSuspects, ...staticSuspects].filter(
+      (s) => isRelevant.has(s.kind) && (!isSessionFailure(finding) || isSessionSpecific(s))
+    );
     const requestPath = failingRequestPath(finding, splitById);
     const suspects = rankSuspects(relevant, relevantKinds, requestPath).slice(0, MAX_SUSPECTS_PER_FINDING);
 

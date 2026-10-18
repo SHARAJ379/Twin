@@ -9,6 +9,9 @@ shift between minor versions.
 
 ### Fixed
 
+- A session failure only names session-specific code as its likely cause - a session store, or a
+  container named for sessions or tokens - and says "no confident suspect" when there's none,
+  instead of pointing at a data container like `const items = []`.
 - The Node tracer finds module state declared alongside more statements
   (`const notes = new Map(); let nextId = 1;`), and multer uploads saved to local disk
   (`multer({ dest: ... })`, `multer.diskStorage(...)`) unless the path comes from an env var.

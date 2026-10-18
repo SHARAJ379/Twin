@@ -27,6 +27,7 @@ function renderFinding(finding: Finding, findings: readonly Finding[], profile: 
   for (const suspect of finding.suspects) {
     lines.push(`  likely cause: ${suspect.file}:${suspect.line}  ${suspect.snippet}  (${suspect.confidence} confidence)`);
   }
+  if (finding.status === "fail" && finding.suspects.length === 0) lines.push("  likely cause: no confident suspect");
   if (prompt) {
     lines.push("");
     lines.push("  Fix prompt (paste into Claude Code):");

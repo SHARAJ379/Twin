@@ -82,3 +82,17 @@ describe("renderTerminalReport", () => {
     expect(out).toContain("1 bug found (authenticated requests were rejected on another instance)");
   });
 });
+
+describe("renderTerminalReport: a failure with no suspect", () => {
+  it("says there is no confident suspect rather than leaving it blank", () => {
+    const f: Finding = {
+      checkId: "session-survives-switch",
+      status: "fail",
+      title: "Session survives instance switch",
+      summary: "rejected (status 401)",
+      evidence: [],
+      suspects: []
+    };
+    expect(renderTerminalReport([f], computeVerdict([f]), "ephemeral")).toContain("likely cause: no confident suspect");
+  });
+});

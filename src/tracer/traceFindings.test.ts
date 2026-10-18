@@ -114,10 +114,11 @@ describe("traceFindings", () => {
       path.join(projectDir, "server.js"),
       [
         'const session = require("express-session");', // memory-session-store, line 1
-        "const a = new Map();", // module-state, line 2
-        "const b = new Map();", // module-state, line 3
-        "const c = new Map();", // module-state, line 4
-        "let nextId = 1;" // module-state (counter), line 5
+        // Session-named, so a session failure may name them (see below).
+        "const sessions = new Map();", // module-state, line 2
+        "const tokens = new Map();", // module-state, line 3
+        "const loginAttempts = new Map();", // module-state, line 4
+        "let sessionCount = 1;" // module-state (counter), line 5
       ].join("\n")
     );
     // session-survives-switch declares ["memory-session-store", "module-state"].
@@ -125,6 +126,30 @@ describe("traceFindings", () => {
 
     expect(result[0]!.suspects[0]).toMatchObject({ kind: "memory-session-store", line: 1 });
     expect(result[0]!.suspects).toHaveLength(3); // still capped
+  });
+
+  // Found by testing the packed tarball: a Flask session failure was blamed on
+  // `items = {}`. A session failure names session-specific code or nothing.
+  it("never names a plain data container for a session failure, even when nothing else matches", async () => {
+    await writeFile(path.join(projectDir, "server.js"), ["const items = [];", "const notes = new Map(); let nextId = 1;"].join("\n"));
+
+    const [session, data] = await traceFindings(
+      [finding("session-survives-switch", "fail"), finding("data-consistency", "fail")],
+      projectDir,
+      [],
+      nodeStack
+    );
+
+    expect(session!.suspects).toEqual([]); // no confident suspect
+    expect(data!.suspects.map((s) => s.snippet)).toContain("const notes = new Map(); let nextId = 1;");
+  });
+
+  it("names a session-named container for a session failure, ahead of nothing else", async () => {
+    await writeFile(path.join(projectDir, "server.js"), ["const items = [];", "const sessions = {}; // sessionId -> user"].join("\n"));
+
+    const [session] = await traceFindings([finding("session-survives-switch", "fail")], projectDir, [], nodeStack);
+
+    expect(session!.suspects.map((s) => s.line)).toEqual([2]);
   });
 
   it("orders a lower-confidence suspect after higher-confidence ones of the same kind", async () => {

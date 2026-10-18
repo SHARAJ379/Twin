@@ -41,6 +41,7 @@ export function renderMarkdownReport(
     for (const suspect of finding.suspects) {
       lines.push(`**Likely cause:** \`${suspect.file}:${suspect.line}\` - ${suspect.snippet} (${suspect.confidence} confidence)`, "");
     }
+    if (finding.status === "fail" && finding.suspects.length === 0) lines.push("**Likely cause:** no confident suspect", "");
     if (prompt) {
       lines.push("**Fix prompt (paste into Claude Code):**", "", "```", buildFixPrompt(finding, profile), "```", "");
     }

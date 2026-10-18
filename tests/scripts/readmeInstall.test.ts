@@ -48,7 +48,7 @@ describe("scripts/readmeInstall.mjs", () => {
   it.each(["posix", "powershell"])("lists every block the real README marks for %s, and each one extracts", (shell) => {
     const { code, routes, stderr } = list(shell);
     expect(code, stderr).toBe(0);
-    expect(routes).toEqual(expect.arrayContaining(["source", "unreleased"]));
+    expect(routes).toEqual(expect.arrayContaining(["npm", "npx", "source", "unreleased"]));
     for (const route of routes) {
       const { code: extracted, stdout, stderr: why } = extract(route, shell);
       expect(extracted, `${route}: ${why}`).toBe(0);

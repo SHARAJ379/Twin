@@ -7,11 +7,13 @@ name: Install
 # tarball, and the Action job builds from a checkout.
 #
 # The commands come out of README.md itself (scripts/readmeInstall.mjs), so
-# this can't drift from what users copy. They fetch Twin from GitHub - whatever
-# master is, which is what someone following the README gets right now. On a
-# pull request that's master, not the PR; the push that merges it runs this
-# again. The weekly run catches what changes without a push of ours: npm 12,
-# for one, started refusing git packages unless --allow-git is given.
+# this can't drift from what users copy. They fetch Twin themselves: the npm
+# and npx lines get the latest release from the registry, the source and
+# unreleased ones whatever master is on GitHub - what someone following the
+# README gets right now. On a pull request that's master, not the PR; the
+# push that merges it runs this again. The weekly run catches what changes
+# without a push of ours: npm 12, for one, started refusing git packages
+# unless --allow-git is given.
 
 on:
   push:
@@ -103,6 +105,11 @@ jobs:
           mapfile -t routes < "$RUNNER_TEMP/routes-posix.txt"
           for route in "${routes[@]}"; do
             echo "::group::README route: $route"
+            # Each route starts with no Twin installed: npx runs a package
+            # that's installed globally instead of fetching it, so after the
+            # npm route the npx one would pass on that route's install.
+            npm uninstall -g @sharaj379/twin
+            if command -v twin; then echo "::error::twin is still installed before route $route"; exit 1; fi
             mkdir "$RUNNER_TEMP/run-$route"
             # stdin from /dev/null: npm and npx must not read (and use up) anything of ours.
             (cd "$RUNNER_TEMP/run-$route" && bash "$RUNNER_TEMP/$route-posix.sh" < /dev/null)
@@ -118,6 +125,10 @@ jobs:
           $routes = @(Get-Content "$env:RUNNER_TEMP\routes-powershell.txt" | Where-Object { $_.Trim() -ne '' })
           foreach ($route in $routes) {
             Write-Host "::group::README route: $route"
+            # Each route starts with no Twin installed (see the bash step).
+            npm uninstall -g @sharaj379/twin
+            if ($LASTEXITCODE -ne 0) { Write-Host "::error::npm uninstall -g failed before route '$route'"; exit 1 }
+            if (Get-Command twin -ErrorAction SilentlyContinue) { Write-Host "::error::twin is still installed before route '$route'"; exit 1 }
             $dir = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP "run-$route")
             Push-Location $dir
             powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\$route-powershell.ps1"

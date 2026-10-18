@@ -21,6 +21,7 @@ Python, Go, Ruby and PHP** are all supported, detected automatically.
 Requires Node.js >= 20. The same commands work in a macOS/Linux terminal and in
 Windows PowerShell:
 
+<!-- install-check: npm posix powershell -->
 ```bash
 npm install -g @sharaj379/twin
 twin doctor   # checks your machine can run it
@@ -28,6 +29,7 @@ twin doctor   # checks your machine can run it
 
 Or run it without installing:
 
+<!-- install-check: npx posix powershell -->
 ```bash
 npx @sharaj379/twin doctor
 ```

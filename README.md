@@ -18,18 +18,61 @@ Python, Go, Ruby and PHP** are all supported, detected automatically.
 
 ## Install
 
-> **Pre-release.** Twin isn't published to npm yet, so `npm install -g @sharaj379/twin`
-> returns a 404 for now. Install it straight from GitHub instead. npm builds it on
-> install, which takes a minute.
+> **Pre-release.** Twin isn't on npm yet: `npm install -g @sharaj379/twin` returns a
+> 404 until the first release. Until then, use one of the two ways below. Both build
+> Twin from its source on GitHub (a minute or two), and need Node.js >= 20 and git.
+> CI runs these exact commands on Linux and Windows, with npm 10, 11 and 12.
 
+**Run it without installing.** This works in any terminal, Windows PowerShell included:
+
+<!-- install-check: npx posix powershell -->
 ```bash
-npm install -g github:SHARAJ379/Twin
-twin doctor   # checks your machine can run it
+npx --allow-git=all github:SHARAJ379/Twin doctor
 ```
 
-That installs whatever `master` is at the time. Requires Node.js >= 20. Once a
-release is published, `npm install -g @sharaj379/twin` will work as well. The
-package is scoped but the command isn't: it's `twin` either way.
+Use `npx --allow-git=all github:SHARAJ379/Twin` wherever this README says `twin`,
+for example `npx --allow-git=all github:SHARAJ379/Twin run`. npm 12 won't fetch a
+package from git without `--allow-git`, and Twin is the only one this fetches.
+Older npm versions accept the flag too.
+
+**Install a `twin` command.** Clone it, build it, and link it globally.
+
+macOS / Linux:
+
+<!-- install-check: clone posix -->
+```bash
+git clone https://github.com/SHARAJ379/Twin.git
+cd Twin
+npm install
+npm run build
+npm install -g .
+twin doctor
+```
+
+Windows (PowerShell):
+
+<!-- install-check: clone powershell -->
+```powershell
+git clone https://github.com/SHARAJ379/Twin.git
+cd Twin
+npm install
+npm run build
+npm install -g .
+twin doctor
+```
+
+`npm install -g .` links the global `twin` to that folder, so keep the folder. To
+update, run `git pull`, `npm install` and `npm run build` in it. npm 11 and later
+may warn that some install scripts were blocked. That's expected: `npm run build`
+has already built Twin. If PowerShell refuses with "running scripts is disabled on
+this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or
+type `npm.cmd`, `npx.cmd` and `twin.cmd` instead.
+
+`npm install -g github:SHARAJ379/Twin` doesn't work. npm builds a package fetched
+from git inside the global install, where Twin's build tools aren't installed.
+
+Once Twin is published, `npm install -g @sharaj379/twin` will be the way to install
+it. The package is scoped but the command isn't: it's `twin` either way.
 
 Working on Twin itself is in [CONTRIBUTING.md](CONTRIBUTING.md).
 

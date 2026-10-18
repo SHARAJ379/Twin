@@ -144,6 +144,20 @@ describe("traceFindings", () => {
     expect(data!.suspects.map((s) => s.snippet)).toContain("const notes = new Map(); let nextId = 1;");
   });
 
+  it("names a local file write for a session failure only when it writes sessions", async () => {
+    await writeFile(
+      path.join(projectDir, "server.js"),
+      [
+        'fs.writeFileSync(path.join(__dirname, "data.json"), body);', // records, line 1
+        'fs.writeFileSync(path.join(__dirname, "sessions", sid + ".json"), body);' // sessions, line 2
+      ].join("\n")
+    );
+
+    const [session] = await traceFindings([finding("session-survives-switch", "fail")], projectDir, [], nodeStack);
+
+    expect(session!.suspects.map((s) => s.line)).toEqual([2]);
+  });
+
   it("names a session-named container for a session failure, ahead of nothing else", async () => {
     await writeFile(path.join(projectDir, "server.js"), ["const items = [];", "const sessions = {}; // sessionId -> user"].join("\n"));
 

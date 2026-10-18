@@ -14,7 +14,7 @@ const RELEVANT_KINDS: Record<string, SuspectKind[]> = {
   // A broken session store is just as often a plain module-level object
   // (as in examples/broken-express) as it is express-session misconfigured
   // without a `store:` - both are "memory-session-store"'s and "module-state"'s territory.
-  "session-survives-switch": ["memory-session-store", "module-state"],
+  "session-survives-switch": ["memory-session-store", "module-state", "local-fs-write"],
   // local-fs-write belongs here too: a JSON/flat file store is as common a
   // reason records don't cross instances as an in-memory object is.
   "data-consistency": ["module-state", "sqlite-file", "local-fs-write"],
@@ -28,7 +28,7 @@ const RELEVANT_KINDS: Record<string, SuspectKind[]> = {
  * reached the store the check is named after, so the store's code can't be
  * what explains it (domain/authRejection.ts).
  */
-const AUTH_BLOCKED_KINDS: SuspectKind[] = ["memory-session-store", "module-state"];
+const AUTH_BLOCKED_KINDS: SuspectKind[] = ["memory-session-store", "module-state", "local-fs-write"];
 
 /** A container whose name says it holds sessions or logins: `sessions = {}`, `const tokens = new Map()`. */
 const SESSION_NAME = /sess|sid|token|auth|login|jwt|cookie/i;
@@ -41,11 +41,14 @@ function declaredName(snippet: string): string | undefined {
 /**
  * Whether a suspect can explain a *session* failure. A session-store rule
  * can; a plain module-level container only when its name says it holds
- * sessions. `const items = []` was listed as a session failure's likely
- * cause - pointing someone at their data store to fix their login.
+ * sessions, and a local file write only when it writes sessions
+ * (`file_put_contents($sessionDir . ...)`). `const items = []` was listed as
+ * a session failure's likely cause - pointing someone at their data store to
+ * fix their login.
  */
 function isSessionSpecific(suspect: Suspect): boolean {
   if (suspect.kind === "memory-session-store") return true;
+  if (suspect.kind === "local-fs-write") return SESSION_NAME.test(suspect.snippet);
   if (suspect.kind !== "module-state") return false;
   const name = declaredName(suspect.snippet);
   return name !== undefined && SESSION_NAME.test(name);

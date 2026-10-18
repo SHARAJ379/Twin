@@ -9,6 +9,9 @@ shift between minor versions.
 
 ### Fixed
 
+- The Node tracer finds module state declared alongside more statements
+  (`const notes = new Map(); let nextId = 1;`), and multer uploads saved to local disk
+  (`multer({ dest: ... })`, `multer.diskStorage(...)`) unless the path comes from an env var.
 - A Flask session failure is blamed on its secret key when that key falls back to a random one
   (`os.environ.get("SECRET_KEY") or os.urandom(24)`, `or secrets.token_hex(...)`, `or uuid4().hex`,
   or a random default). The rule only knew the bare `secret_key = os.urandom(24)` form, and the

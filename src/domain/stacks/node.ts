@@ -5,8 +5,10 @@ import type { SuspectRule } from "../suspectRule.js";
 // enough in real code that the pattern has to tolerate them explicitly.
 // Map/Set are as common as {} and [] for this in modern code, so they belong
 // in the same rule - the failure mode is identical.
+// The declaration can be followed by more statements on the same line
+// ("const notes = new Map(); let nextId = 1;") - anything after its `;`.
 const MODULE_STATE_PATTERN =
-  /^(const|let|var)\s+\w+\s*=\s*(\{\}|\[\]|new\s+(Map|Set|WeakMap|WeakSet)\s*\(.*\)|Object\.create\(\s*null\s*\))\s*;?\s*(\/\/.*)?$/;
+  /^(const|let|var)\s+\w+\s*=\s*(\{\}|\[\]|new\s+(Map|Set|WeakMap|WeakSet)\s*\([^)]*\)|Object\.create\(\s*null\s*\))\s*(;.*|\/\/.*)?$/;
 
 export const moduleStateRule: SuspectRule = {
   id: "module-level-empty-container",
@@ -22,6 +24,8 @@ export const moduleStateRule: SuspectRule = {
       "var cache = {}",
       "const items = []; // { id, name }",
       "const notes = new Map();",
+      "const notes = new Map(); let nextId = 1;",
+      "const users = {}; const sessions = new Map(); // in memory",
       "let seen = new Set();",
       'const cache = new Map([["a", 1]]);',
       "const registry = Object.create(null);"
@@ -30,7 +34,8 @@ export const moduleStateRule: SuspectRule = {
       "  const sessions = {};",
       "  const notes = new Map();",
       "const CONFIG = { port: 3000 };",
-      "const items = getItems();"
+      "const items = getItems();",
+      "const items = new Map(loadFromDb()).size;"
     ]
   }
 };
@@ -81,6 +86,54 @@ export const fsWriteRelativePathRule: SuspectRule = {
   fixtures: {
     matches: ['fs.writeFileSync(path.join(__dirname, "data.json"), body);'],
     nonMatches: ["fs.writeFileSync(process.env.DATA_FILE, body);"]
+  }
+};
+
+/**
+ * Whether an expression is a path configured through the environment: it
+ * mentions process.env itself, or is an identifier the file assigns from it
+ * (`const UPLOAD_DIR = process.env.UPLOAD_DIR || ...`).
+ */
+function isEnvConfigured(expression: string, fullFileContent: string): boolean {
+  if (expression.includes("process.env")) return true;
+  const ident = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(expression)?.[1];
+  if (ident === undefined) return false;
+  return new RegExp(`(const|let|var)\\s+${ident.replace(/\$/g, "\\$")}\\s*=[^\\n]*process\\.env`).test(fullFileContent);
+}
+
+const MULTER_DEST_PATTERN = /multer\s*\(\s*\{[^}]*\bdest\s*:\s*([^,}]+)/;
+const MULTER_DISK_STORAGE_PATTERN = /multer\.diskStorage\s*\(/;
+const MULTER_DESTINATION_PATTERN = /destination\s*:\s*([^\n]*)/;
+
+export const multerLocalDiskRule: SuspectRule = {
+  id: "multer-local-disk",
+  kind: "local-fs-write",
+  confidence: "medium",
+  rationale:
+    "multer saves uploads to this instance's own disk (`dest:` / diskStorage) - another instance can't serve the file, and a managed host's ephemeral disk loses it on restart; point it at a shared volume via an env var, or use object storage",
+  test: (line, fullFileContent) => {
+    const dest = MULTER_DEST_PATTERN.exec(line);
+    if (dest !== null) return !isEnvConfigured(dest[1]!, fullFileContent);
+    if (!MULTER_DISK_STORAGE_PATTERN.test(line)) return false;
+    // The destination is usually on a later line of the same call.
+    const destination = MULTER_DESTINATION_PATTERN.exec(fullFileContent.slice(fullFileContent.indexOf("diskStorage")))?.[1];
+    if (destination === undefined) return true; // multer's default is the OS temp dir: still this instance's disk
+    const target = /cb\s*\(\s*null\s*,\s*([^)]+)\)/.exec(destination)?.[1] ?? destination.replace(/,\s*$/, "");
+    return !isEnvConfigured(target, fullFileContent);
+  },
+  fixtures: {
+    matches: [
+      'const upload = multer({ dest: "uploads/" });',
+      'const upload = multer({ dest: path.join(__dirname, "uploads") });',
+      'const storage = multer.diskStorage({\n  destination: (req, file, cb) => cb(null, "uploads/"),\n  filename: (req, file, cb) => cb(null, file.originalname)\n});',
+      'const UPLOADS = path.join(__dirname, "uploads");\nconst upload = multer({ dest: UPLOADS });'
+    ],
+    nonMatches: [
+      "const upload = multer({ dest: process.env.UPLOAD_DIR });",
+      'const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, "uploads");\nconst upload = multer({ dest: UPLOAD_DIR });',
+      "const storage = multer.diskStorage({\n  destination: (req, file, cb) => cb(null, process.env.UPLOAD_DIR),\n});",
+      "const upload = multer({ storage: multer.memoryStorage() });"
+    ]
   }
 };
 
@@ -145,6 +198,6 @@ export const nodeStack: StackProfile = {
   linkDirs: ["node_modules"],
   ignoreDirs: ["node_modules", "dist", "build", ".next", "coverage"],
   sourceExtensions: [".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx"],
-  rules: [moduleStateRule, moduleCounterRule, expressSessionNoStoreRule, fsWriteRelativePathRule, sqliteFileRule],
+  rules: [moduleStateRule, moduleCounterRule, expressSessionNoStoreRule, fsWriteRelativePathRule, multerLocalDiskRule, sqliteFileRule],
   resolveStartCommand
 };

@@ -4,12 +4,16 @@
  * install job runs exactly what users copy - and fails the moment that stops
  * working.
  *
+ *   node scripts/readmeInstall.mjs --list <shell> [--readme <path>]
  *   node scripts/readmeInstall.mjs <route> <shell> [--readme <path>]
  *
  * A block is the fenced code block right after a marker comment in README.md:
  *
- *   <!-- install-check: clone posix -->
- *   <!-- install-check: npx posix powershell -->
+ *   <!-- install-check: source posix -->
+ *   <!-- install-check: unreleased posix powershell -->
+ *
+ * `--list` names every route marked for a shell, so CI runs whatever the
+ * README marks - adding a marker is all it takes to put a block under test.
  *
  * The block must end by running `<twin invocation> doctor`; the script adds
  * `<twin invocation> --version` after it, so every route proves both.
@@ -41,12 +45,31 @@ const KNOWN_BROKEN = [
   }
 ];
 
+const MARKER = /^<!--\s*install-check:\s*([^>]*?)\s*-->\s*$/;
+
+/**
+ * Every route the README marks for this shell, in README order. Never empty:
+ * a shell with nothing to run would make the install job a green no-op.
+ */
+export function installRoutes(readme, shell) {
+  if (!SHELLS.has(shell)) throw new Error(`unknown shell "${shell}" - expected one of: ${[...SHELLS].join(", ")}`);
+  const routes = [];
+  for (const line of readme.replace(/\r\n/g, "\n").split("\n")) {
+    const match = MARKER.exec(line.trim());
+    if (match === null) continue;
+    const [route, ...shells] = match[1].split(/\s+/);
+    if (shells.includes(shell) && !routes.includes(route)) routes.push(route);
+  }
+  if (routes.length === 0) throw new Error(`README.md marks no install block for ${shell} - did its install section change?`);
+  return routes;
+}
+
 /** The commands in the README's block for this route and shell, without blank and comment-only lines. */
 export function installCommands(readme, route, shell) {
   if (!SHELLS.has(shell)) throw new Error(`unknown shell "${shell}" - expected one of: ${[...SHELLS].join(", ")}`);
   const lines = readme.replace(/\r\n/g, "\n").split("\n");
   const markerAt = lines.findIndex((line) => {
-    const match = /^<!--\s*install-check:\s*([^>]*?)\s*-->\s*$/.exec(line.trim());
+    const match = MARKER.exec(line.trim());
     if (match === null) return false;
     const [markerRoute, ...shells] = match[1].split(/\s+/);
     return markerRoute === route && shells.includes(shell);
@@ -110,6 +133,19 @@ function main(argv) {
     readmeFlag === -1
       ? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "README.md")
       : path.resolve(args.splice(readmeFlag, 2)[1]);
+  if (args[0] === "--list") {
+    if (args[1] === undefined) {
+      console.error("usage: node scripts/readmeInstall.mjs --list <posix|powershell> [--readme <path>]");
+      return 2;
+    }
+    try {
+      process.stdout.write(`${installRoutes(readFileSync(readmePath, "utf8"), args[1]).join("\n")}\n`);
+      return 0;
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : String(err));
+      return 1;
+    }
+  }
   const [route, shell] = args;
   if (route === undefined || shell === undefined) {
     console.error("usage: node scripts/readmeInstall.mjs <route> <posix|powershell> [--readme <path>]");

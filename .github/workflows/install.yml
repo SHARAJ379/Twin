@@ -77,34 +77,53 @@ jobs:
           echo "node $(node --version), npm $(npm --version)"
           [ "$(npm --version | cut -d. -f1)" = "$NPM_MAJOR" ] || { echo "expected npm $NPM_MAJOR"; exit 1; }
 
+      # Every block README.md marks for each shell (scripts/readmeInstall.mjs
+      # --list), not a list kept here: marking a block is all it takes to put
+      # it under test, and a README with nothing marked fails instead of
+      # running nothing.
       - name: Write the README's install commands out as scripts
         shell: bash
         run: |
-          for route in npx clone; do
-            node scripts/readmeInstall.mjs "$route" posix > "$RUNNER_TEMP/$route.sh"
-            node scripts/readmeInstall.mjs "$route" powershell > "$RUNNER_TEMP/$route.ps1"
-            mkdir "$RUNNER_TEMP/$route"
+          set -euo pipefail
+          for shell in posix powershell; do
+            node scripts/readmeInstall.mjs --list "$shell" > "$RUNNER_TEMP/routes-$shell.txt"
+            ext=sh; [ "$shell" = powershell ] && ext=ps1
+            mapfile -t routes < "$RUNNER_TEMP/routes-$shell.txt"
+            for route in "${routes[@]}"; do
+              node scripts/readmeInstall.mjs "$route" "$shell" > "$RUNNER_TEMP/$route-$shell.$ext"
+            done
+            echo "$shell routes: ${routes[*]}"
           done
 
-      - name: "README: run it without installing (bash)"
+      - name: Run every README install route (bash)
         if: runner.os != 'Windows'
         shell: bash
-        working-directory: ${{ runner.temp }}/npx
-        run: bash "$RUNNER_TEMP/npx.sh"
-      - name: "README: install a twin command (bash)"
-        if: runner.os != 'Windows'
-        shell: bash
-        working-directory: ${{ runner.temp }}/clone
-        run: bash "$RUNNER_TEMP/clone.sh"
+        run: |
+          set -euo pipefail
+          mapfile -t routes < "$RUNNER_TEMP/routes-posix.txt"
+          for route in "${routes[@]}"; do
+            echo "::group::README route: $route"
+            mkdir "$RUNNER_TEMP/run-$route"
+            # stdin from /dev/null: npm and npx must not read (and use up) anything of ours.
+            (cd "$RUNNER_TEMP/run-$route" && bash "$RUNNER_TEMP/$route-posix.sh" < /dev/null)
+            echo "::endgroup::"
+          done
+          echo "ran: ${routes[*]}"
 
       # Windows PowerShell 5.1, the one every Windows machine has - not pwsh.
-      - name: "README: run it without installing (Windows PowerShell)"
+      - name: Run every README install route (Windows PowerShell)
         if: runner.os == 'Windows'
         shell: powershell
-        working-directory: ${{ runner.temp }}/npx
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\npx.ps1"
-      - name: "README: install a twin command (Windows PowerShell)"
-        if: runner.os == 'Windows'
-        shell: powershell
-        working-directory: ${{ runner.temp }}/clone
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\clone.ps1"
+        run: |
+          $routes = @(Get-Content "$env:RUNNER_TEMP\routes-powershell.txt" | Where-Object { $_.Trim() -ne '' })
+          foreach ($route in $routes) {
+            Write-Host "::group::README route: $route"
+            $dir = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP "run-$route")
+            Push-Location $dir
+            powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_TEMP\$route-powershell.ps1"
+            $code = $LASTEXITCODE
+            Pop-Location
+            Write-Host "::endgroup::"
+            if ($code -ne 0) { Write-Host "::error::README install route '$route' failed (exit $code)"; exit 1 }
+          }
+          Write-Host "ran: $($routes -join ' ')"

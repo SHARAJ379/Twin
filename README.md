@@ -18,28 +18,34 @@ Python, Go, Ruby and PHP** are all supported, detected automatically.
 
 ## Install
 
-> **Pre-release.** Twin isn't on npm yet: `npm install -g @sharaj379/twin` returns a
-> 404 until the first release. Until then, use one of the two ways below. Both build
-> Twin from its source on GitHub (a minute or two), and need Node.js >= 20 and git.
-> CI runs these exact commands on Linux and Windows, with npm 10, 11 and 12.
+Requires Node.js >= 20. The same commands work in a macOS/Linux terminal and in
+Windows PowerShell:
 
-**Run it without installing.** This works in any terminal, Windows PowerShell included:
-
-<!-- install-check: npx posix powershell -->
 ```bash
-npx --allow-git=all github:SHARAJ379/Twin doctor
+npm install -g @sharaj379/twin
+twin doctor   # checks your machine can run it
 ```
 
-Use `npx --allow-git=all github:SHARAJ379/Twin` wherever this README says `twin`,
-for example `npx --allow-git=all github:SHARAJ379/Twin run`. npm 12 won't fetch a
-package from git without `--allow-git`, and Twin is the only one this fetches.
-Older npm versions accept the flag too.
+Or run it without installing:
 
-**Install a `twin` command.** Clone it, build it, and link it globally.
+```bash
+npx @sharaj379/twin doctor
+```
 
-macOS / Linux:
+With npx, write `npx @sharaj379/twin` wherever this README says `twin`, for example
+`npx @sharaj379/twin run`. The package is scoped but the command isn't: it's `twin`.
+If PowerShell refuses with "running scripts is disabled on this system", run
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or type `npm.cmd`,
+`npx.cmd` and `twin.cmd` instead.
 
-<!-- install-check: clone posix -->
+CI runs these install commands, word for word, on clean Linux and Windows machines
+with npm 10, 11 and 12, on every push and weekly.
+
+### Install from source
+
+Clone it, build it, and link it globally. macOS / Linux:
+
+<!-- install-check: source posix -->
 ```bash
 git clone https://github.com/SHARAJ379/Twin.git
 cd Twin
@@ -51,7 +57,7 @@ twin doctor
 
 Windows (PowerShell):
 
-<!-- install-check: clone powershell -->
+<!-- install-check: source powershell -->
 ```powershell
 git clone https://github.com/SHARAJ379/Twin.git
 cd Twin
@@ -64,15 +70,22 @@ twin doctor
 `npm install -g .` links the global `twin` to that folder, so keep the folder. To
 update, run `git pull`, `npm install` and `npm run build` in it. npm 11 and later
 may warn that some install scripts were blocked. That's expected: `npm run build`
-has already built Twin. If PowerShell refuses with "running scripts is disabled on
-this system", run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or
-type `npm.cmd`, `npx.cmd` and `twin.cmd` instead.
+has already built Twin.
 
-`npm install -g github:SHARAJ379/Twin` doesn't work. npm builds a package fetched
-from git inside the global install, where Twin's build tools aren't installed.
+### Latest unreleased
 
-Once Twin is published, `npm install -g @sharaj379/twin` will be the way to install
-it. The package is scoped but the command isn't: it's `twin` either way.
+To try what's on `master` before it's released, without cloning:
+
+<!-- install-check: unreleased posix powershell -->
+```bash
+npx --allow-git=all github:SHARAJ379/Twin doctor
+```
+
+It builds Twin from source on the way in (a minute or two) and needs git. npm 12
+won't fetch a package from git without `--allow-git`, and Twin is the only one this
+fetches; older npm versions accept the flag too. `npm install -g
+github:SHARAJ379/Twin` doesn't work: npm builds a package fetched from git inside the
+global install, where Twin's build tools aren't installed.
 
 Working on Twin itself is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -422,7 +435,7 @@ checked-out repo and exposes the report as a step output:
 - uses: actions/setup-node@v4      # the Node your app runs on (Twin needs >= 20)
   with:
     node-version: 22
-- uses: SHARAJ379/Twin@<commit-sha>
+- uses: SHARAJ379/Twin@v0.1.0
   with:
     project-dir: .
     # install: auto               # the default: npm ci / pip / bundle / composer / go mod download
@@ -434,9 +447,8 @@ did, or give it your own command. It runs on the Node already on PATH and
 leaves it alone. Only set `node-version` if the runner has none. The `setup`,
 `start` and `build` inputs mirror the CLI flags.
 
-There's no release tag yet, so pin a full commit SHA rather than `@master`. The
-branch moves, and a CI job that silently changes behavior is worse than one that
-needs a bump. Once `v0.1.0` exists, `@v0.1.0` works too.
+Pin a release tag (or a full commit SHA), not `@master`. The branch moves, and a CI
+job that silently changes behavior is worse than one that needs a bump.
 
 ## Troubleshooting
 

@@ -39,17 +39,29 @@ describe("scripts/readmeInstall.mjs", () => {
     return file;
   }
 
-  it.each([
-    ["npx", "posix"],
-    ["npx", "powershell"],
-    ["clone", "posix"],
-    ["clone", "powershell"]
-  ])("finds the real README's %s block for %s, ending in doctor and then --version", (route, shell) => {
-    const { code, stdout, stderr } = extract(route, shell);
+  const list = (shell: string, readme?: string): { code: number | null; routes: string[]; stderr: string } => {
+    const args = [script, "--list", shell, ...(readme !== undefined ? ["--readme", readme] : [])];
+    const result = spawnSync(process.execPath, args, { encoding: "utf8" });
+    return { code: result.status, routes: result.stdout.split(/\r?\n/).filter((line) => line !== ""), stderr: result.stderr };
+  };
+
+  it.each(["posix", "powershell"])("lists every block the real README marks for %s, and each one extracts", (shell) => {
+    const { code, routes, stderr } = list(shell);
     expect(code, stderr).toBe(0);
-    const lines = stdout.split(/\r?\n/).filter((line) => !line.startsWith("Write-Host") && !line.startsWith("if (") && line.trim() !== "");
-    expect(lines.some((line) => / doctor$/.test(line))).toBe(true);
-    expect(lines.at(-1)).toMatch(/ --version$/);
+    expect(routes).toEqual(expect.arrayContaining(["source", "unreleased"]));
+    for (const route of routes) {
+      const { code: extracted, stdout, stderr: why } = extract(route, shell);
+      expect(extracted, `${route}: ${why}`).toBe(0);
+      const lines = stdout.split(/\r?\n/).filter((line) => !line.startsWith("Write-Host") && !line.startsWith("if (") && line.trim() !== "");
+      expect(lines.some((line) => / doctor(\s+#.*)?$/.test(line)), route).toBe(true);
+      expect(lines.at(-1), route).toMatch(/ --version$/);
+    }
+  });
+
+  it("fails to list when nothing is marked for a shell - never an empty, green run", async () => {
+    const readme = await readmeWith(block("source posix", ["npm install -g .", "twin doctor"]));
+    expect(list("posix", readme)).toMatchObject({ code: 0, routes: ["source"] });
+    expect(list("powershell", readme).code).toBe(1);
   });
 
   it("refuses the global git install that shipped broken", async () => {

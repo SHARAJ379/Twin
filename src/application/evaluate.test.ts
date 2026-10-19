@@ -193,6 +193,51 @@ describe("evaluate", () => {
       expect(findings[0]).toMatchObject({ checkId: INSTANCE_DIVERGENCE_CHECK_ID, status: "fail", blockedBy: "auth" });
     });
 
+    it("is not a second bug when it fails after a check already caught one", () => {
+      const withCheckFirst: Scenario = {
+        version: 1,
+        name: "update",
+        steps: [
+          { kind: "request", id: "create", request: { method: "POST", path: "/items" } },
+          { kind: "request", id: "read-other", request: { method: "GET", path: "/items/1" }, check: "data-consistency" },
+          { kind: "request", id: "update-other", request: { method: "PUT", path: "/items/1" } }
+        ]
+      };
+      const findings = evaluate({
+        scenario: withCheckFirst,
+        controlResults: [stepResult("create", true), stepResult("read-other", true), stepResult("update-other", true)],
+        splitResults: [stepResult("create", true), answered("read-other", 404, false), answered("update-other", 404, false)],
+        workspaceDiffs: [],
+        checks: new Map([["data-consistency", passthroughCheck]]),
+        profile: "ephemeral"
+      });
+
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ checkId: "data-consistency", status: "fail" });
+    });
+
+    it("is still its own bug when it diverged before any check failed", () => {
+      const withCheckAfter: Scenario = {
+        version: 1,
+        name: "update",
+        steps: [
+          { kind: "request", id: "create", request: { method: "POST", path: "/items" } },
+          { kind: "request", id: "update-other", request: { method: "PUT", path: "/items/1" } },
+          { kind: "request", id: "read-other", request: { method: "GET", path: "/items/1" }, check: "data-consistency" }
+        ]
+      };
+      const findings = evaluate({
+        scenario: withCheckAfter,
+        controlResults: [stepResult("create", true), stepResult("update-other", true), stepResult("read-other", true)],
+        splitResults: [stepResult("create", true), answered("update-other", 404, false), answered("read-other", 404, false)],
+        workspaceDiffs: [],
+        checks: new Map([["data-consistency", passthroughCheck]]),
+        profile: "ephemeral"
+      });
+
+      expect(findings.map((f) => f.checkId)).toEqual([INSTANCE_DIVERGENCE_CHECK_ID, "data-consistency"]);
+    });
+
     it("stays a scenario error when the control run failed an untagged step too", () => {
       const findings = evaluate({
         scenario: flow,

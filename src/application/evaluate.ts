@@ -48,14 +48,28 @@ function untaggedStepIds(scenario: Scenario): Set<string> {
  * nothing about what the app did, and a flaky request must never be reported
  * as a bug. Steps after the first are its consequences, not bugs of their own.
  */
-function instanceDivergenceFinding(input: EvaluateInput): Finding | undefined {
+function controlPassedEveryUntaggedStep(input: EvaluateInput): boolean {
   const untagged = untaggedStepIds(input.scenario);
-  if (input.controlResults.some((r) => untagged.has(r.stepId) && !r.expectationsPassed)) return undefined;
+  return input.controlResults.every((r) => !untagged.has(r.stepId) || r.expectationsPassed);
+}
 
-  const order = new Map(input.scenario.steps.map((step, index) => [step.id, index] as const));
-  const diverged = input.splitResults
+/** The untagged steps that failed in the split run, in scenario order. */
+function splitOnlyFailures(input: EvaluateInput): StepResult[] {
+  const untagged = untaggedStepIds(input.scenario);
+  const order = stepOrder(input.scenario);
+  return input.splitResults
     .filter((r) => untagged.has(r.stepId) && !r.expectationsPassed)
     .sort((a, b) => (order.get(a.stepId) ?? 0) - (order.get(b.stepId) ?? 0));
+}
+
+function stepOrder(scenario: Scenario): Map<string, number> {
+  return new Map(scenario.steps.map((step, index) => [step.id, index] as const));
+}
+
+function instanceDivergenceFinding(input: EvaluateInput): Finding | undefined {
+  if (!controlPassedEveryUntaggedStep(input)) return undefined;
+
+  const diverged = splitOnlyFailures(input);
   const first = diverged[0];
   if (first?.response === undefined) return undefined;
 
@@ -179,53 +193,74 @@ function historyBefore(input: EvaluateInput, index: number): RunHistory {
   };
 }
 
-/** Turns every tagged (`check:`) step's split-run result, paired with its control-run counterpart, into a Finding. */
+/**
+ * Turns every tagged (`check:`) step's split-run result, paired with its
+ * control-run counterpart, into a Finding - headed by one for the untagged
+ * steps when they didn't run as written.
+ */
 export function evaluate(input: EvaluateInput): Finding[] {
   const findings: Finding[] = [];
+  const controlById = new Map(input.controlResults.map((r) => [r.stepId, r] as const));
+  let firstFailedCheckIndex: number | undefined;
+
+  input.scenario.steps.forEach((step, index) => {
+    const finding = evaluateTaggedStep(input, step, index, controlById);
+    if (finding === undefined) return;
+    findings.push(finding);
+    if (finding.status === "fail") firstFailedCheckIndex ??= index;
+  });
+
+  // An untagged step that only failed after a check had already caught a bug
+  // is that bug's consequence (an update to the record B never got), not a
+  // second bug - and the scenario is proven sound, so not a scenario error
+  // either. Reporting it as either inflated "1 bug" into two.
+  const firstSplitOnly = splitOnlyFailures(input)[0];
+  const consequenceOfFailedCheck =
+    firstSplitOnly !== undefined &&
+    firstFailedCheckIndex !== undefined &&
+    controlPassedEveryUntaggedStep(input) &&
+    (stepOrder(input.scenario).get(firstSplitOnly.stepId) ?? 0) > firstFailedCheckIndex;
 
   // First, so it reads as the headline: if the scenario itself didn't run as
   // written, everything below it is suspect.
-  const integrity = instanceDivergenceFinding(input) ?? scenarioIntegrityFinding(input);
-  if (integrity !== undefined) findings.push(integrity);
-  const controlById = new Map(input.controlResults.map((r) => [r.stepId, r] as const));
+  const integrity = consequenceOfFailedCheck ? undefined : (instanceDivergenceFinding(input) ?? scenarioIntegrityFinding(input));
+  return integrity === undefined ? findings : [integrity, ...findings];
+}
 
-  input.scenario.steps.forEach((step, index) => {
-    if (step.kind !== "request" || step.check === undefined) return;
+/** A tagged (`check:`) step's Finding, or undefined for any other step and for one the split run never reached. */
+function evaluateTaggedStep(
+  input: EvaluateInput,
+  step: Scenario["steps"][number],
+  index: number,
+  controlById: ReadonlyMap<string, StepResult>
+): Finding | undefined {
+  if (step.kind !== "request" || step.check === undefined) return undefined;
 
-    const assertion = input.splitResults.find((r) => r.stepId === step.id);
-    if (assertion === undefined) return; // the split run didn't reach this step - nothing to evaluate
+  const assertion = input.splitResults.find((r) => r.stepId === step.id);
+  if (assertion === undefined) return undefined; // the split run didn't reach this step - nothing to evaluate
 
-    const check = input.checks.get(step.check);
-    if (check === undefined) {
-      findings.push({
-        checkId: step.check,
-        status: "error",
-        title: step.check,
-        summary: `unknown check id "${step.check}"`,
-        evidence: [],
-        suspects: [],
-        reason: `no built-in or plugin check is registered for "${step.check}"`
-      });
-      return;
-    }
+  const check = input.checks.get(step.check);
+  if (check === undefined) {
+    return {
+      checkId: step.check,
+      status: "error",
+      title: step.check,
+      summary: `unknown check id "${step.check}"`,
+      evidence: [],
+      suspects: [],
+      reason: `no built-in or plugin check is registered for "${step.check}"`
+    };
+  }
 
-    if (assertion.error?.code === NOT_SENT) {
-      findings.push(blockedByDependency(input, index, assertion, check.title));
-      return;
-    }
+  if (assertion.error?.code === NOT_SENT) return blockedByDependency(input, index, assertion, check.title);
 
-    findings.push(
-      check.evaluate({
-        assertion,
-        related: resolveRelatedSteps(input.scenario, index, input.splitResults),
-        restartedBetween: restartedSinceRelated(input.scenario, index, input.splitResults),
-        history: historyBefore(input, index),
-        control: controlById.get(step.id),
-        workspaceDiffs: input.workspaceDiffs,
-        profile: input.profile
-      })
-    );
+  return check.evaluate({
+    assertion,
+    related: resolveRelatedSteps(input.scenario, index, input.splitResults),
+    restartedBetween: restartedSinceRelated(input.scenario, index, input.splitResults),
+    history: historyBefore(input, index),
+    control: controlById.get(step.id),
+    workspaceDiffs: input.workspaceDiffs,
+    profile: input.profile
   });
-
-  return findings;
 }

@@ -15,7 +15,9 @@ Found by running Twin against a real FastAPI app:
   reported as an error telling you to "fix the scenario", and the run exited `2`. It is
   a multi-instance bug, and is now reported as an `instance-divergence` failure (exit
   `1`) with a fix prompt and suspects, named after the first step to diverge. A step
-  that fails on a single instance too, or gets no answer at all, is still a scenario error.
+  that fails on a single instance too, or gets no answer at all, is still a scenario error,
+  and one that fails only after a check already caught a bug counts as that bug's
+  consequence rather than a second bug.
 - Every run said "the app is configured with a database ... Twin does not remove them"
   even when `DATABASE_URL` pointed under `{{shared}}`, the throwaway directory Twin
   creates and removes itself.

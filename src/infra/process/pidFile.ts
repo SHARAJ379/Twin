@@ -8,10 +8,27 @@ export interface PidRecord {
   startedAt: string;
 }
 
+/**
+ * A pid an instance Twin spawned could actually have. `twin clean` signals
+ * `-pid`, and on POSIX kill(-1) reaches every process the user owns and
+ * kill(0) Twin's own group - so 0, 1 and anything negative or fractional,
+ * which no spawned child ever gets, must never come out of a pids.json.
+ */
+export function isSpawnedPid(pid: unknown): pid is number {
+  return typeof pid === "number" && Number.isSafeInteger(pid) && pid > 1;
+}
+
 function isPidRecord(value: unknown): value is PidRecord {
   if (typeof value !== "object" || value === null) return false;
   const r = value as Record<string, unknown>;
-  return typeof r["pid"] === "number" && typeof r["instance"] === "string" && typeof r["command"] === "string" && typeof r["startedAt"] === "string";
+  return (
+    isSpawnedPid(r["pid"]) &&
+    typeof r["instance"] === "string" &&
+    // An empty command fingerprints to "", which every command line contains.
+    typeof r["command"] === "string" &&
+    r["command"].trim().length > 0 &&
+    typeof r["startedAt"] === "string"
+  );
 }
 
 export async function writePidFile(filePath: string, records: PidRecord[]): Promise<void> {

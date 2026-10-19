@@ -7,6 +7,13 @@ shift between minor versions.
 
 ## [Unreleased]
 
+### Security
+
+- `twin clean` no longer acts on a process record that no instance Twin started could
+  have: a pid of 0, 1, a negative or fractional number, a record with an empty command,
+  or Twin's own pid. Such a record in a project's `.twin/` could make `twin clean` signal
+  far more than the processes it recorded.
+
 ### Changed
 
 - README rewritten for someone new to Twin: what it is in two sentences, install, a

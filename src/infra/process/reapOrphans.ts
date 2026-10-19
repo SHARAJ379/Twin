@@ -2,7 +2,7 @@ import type { Logger } from "../../ports/logger.js";
 import { getCommandLine } from "./getCommandLine.js";
 import { isInstanceAlive, isProcessAlive } from "./isProcessAlive.js";
 import { killTree } from "./killTree.js";
-import type { PidRecord } from "./pidFile.js";
+import { isSpawnedPid, type PidRecord } from "./pidFile.js";
 
 export interface ReapResult {
   reaped: PidRecord[];
@@ -48,6 +48,15 @@ export async function reapOrphans(records: PidRecord[], logger: Logger): Promise
   const result: ReapResult = { reaped: [], alreadyDead: [], skippedPidReuse: [], skippedUnverifiable: [] };
 
   for (const record of records) {
+    // Before anything signals it: readPidFile already drops these, but a
+    // record that names no real child, or this very process, must never
+    // reach killTree whoever built the list.
+    if (!isSpawnedPid(record.pid) || record.pid === process.pid || fingerprint(record.command).length === 0) {
+      result.skippedUnverifiable.push(record);
+      logger.warn(`pids.json names pid ${record.pid} for instance ${record.instance}, which Twin can't have started; leaving it alone`);
+      continue;
+    }
+
     if (!isProcessAlive(record.pid)) {
       // The leader is gone, but a backgrounded server it launched can still
       // be running in its process group. Signalling the group needs no

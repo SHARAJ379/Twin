@@ -58,6 +58,37 @@ describe("reapOrphans", () => {
     expect(result.reaped).toHaveLength(0);
   });
 
+  // "" is a substring of every command line, so a record with no command
+  // "matched" whatever process held the pid by then.
+  it("never kills a process on a record with no command to match it by", async () => {
+    const child = spawnLongRunning();
+    const pid = child.pid!;
+    try {
+      const result = await reapOrphans([{ pid, instance: "A", command: "  ", startedAt: new Date().toISOString() }], logger);
+
+      expect(result.reaped).toHaveLength(0);
+      expect(result.skippedUnverifiable).toHaveLength(1);
+      expect(isProcessAlive(pid)).toBe(true);
+    } finally {
+      await killTree(pid, { mode: "crash", graceMs: 0 });
+    }
+  });
+
+  it("never signals a pid no instance could have, such as 1 or this process", async () => {
+    const records: PidRecord[] = [1, 0, -1, process.pid].map((pid) => ({
+      pid,
+      instance: "A",
+      command: process.execPath,
+      startedAt: new Date().toISOString()
+    }));
+
+    const result = await reapOrphans(records, logger);
+
+    expect(result.reaped).toHaveLength(0);
+    expect(result.skippedUnverifiable).toHaveLength(4);
+    expect(isProcessAlive(process.pid)).toBe(true);
+  });
+
   it("never kills a live process whose command line no longer matches (PID reuse guard)", async () => {
     // Use THIS test runner's own pid with a command that can't possibly
     // match - if the guard failed, this call would kill the test process.

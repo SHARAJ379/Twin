@@ -5,7 +5,7 @@
     "access": "public"
   },
   "description": "Runs two copies of your app and shows you where they disagree.",
-  "keywords": ["testing", "multi-instance", "differential-testing", "cli", "regression-testing"],
+  "keywords": ["testing", "multi-instance", "differential-testing", "cli", "regression-testing", "horizontal-scaling", "load-balancing", "session", "stateless", "integration-testing"],
   "license": "MIT",
   "author": "Sharaj R Shetty",
   "repository": {

@@ -48,6 +48,28 @@ describe("parseScenarioYaml", () => {
     }
   });
 
+  it("rejects a check that isn't one of the known ones, at its line, and accepts one that is", () => {
+    const withCheck = (check: string): string =>
+      `name: x\nversion: 1\nsteps:\n  - id: read\n    kind: request\n    request: { method: GET, path: /items/1 }\n    check: ${check}\n`;
+    const knownChecks = ["data-consistency", "file-consistency"];
+
+    const typo = parseScenarioYaml(withCheck("data-consistancy"), { knownChecks });
+    expect(typo.ok).toBe(false);
+    if (!typo.ok) {
+      expect(typo.errors).toEqual([
+        {
+          message: '"check: data-consistancy" is not a known check (expected one of data-consistency, file-consistency)',
+          path: "/steps/0/check",
+          line: 7,
+          column: 12
+        }
+      ]);
+    }
+    expect(parseScenarioYaml(withCheck("data-consistency"), { knownChecks }).ok).toBe(true);
+    // Without the list, domain/ can't judge - any id parses.
+    expect(parseScenarioYaml(withCheck("data-consistancy")).ok).toBe(true);
+  });
+
   it("reports a YAML syntax error with a line number", () => {
     const result = parseScenarioYaml("name: x\nsteps:\n  - id: a\n  bad indent: [");
     expect(result.ok).toBe(false);

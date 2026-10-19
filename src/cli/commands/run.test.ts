@@ -38,6 +38,25 @@ describe("runCommand PREFLIGHT failures", () => {
     expect((err as TwinError).code).toBe("E_SCENARIO_INVALID");
   });
 
+  // Found in the pre-release audit: a misspelled check was only reported
+  // after both phases had booted the app and run the whole scenario.
+  it("rejects a misspelled check with E_SCENARIO_INVALID, naming the real ones, without booting anything", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-preflight-"));
+    const scenarioPath = path.join(projectDir, "scenario.yaml");
+    await writeFile(
+      scenarioPath,
+      "name: x\nversion: 1\nsteps:\n  - id: read\n    kind: request\n    request: { method: GET, path: /items/1 }\n    check: data-consistancy\n",
+      "utf8"
+    );
+
+    const err = await runCommand({ ...baseOptions, projectDir, scenarioPath, env: {} }, logger).catch((e: unknown) => e);
+
+    expect((err as TwinError).code).toBe("E_SCENARIO_INVALID");
+    expect((err as TwinError).message).toContain('"check: data-consistancy" is not a known check');
+    expect((err as TwinError).message).toContain("data-consistency");
+    expect(existsSync(path.join(projectDir, ".twin", "runs"))).toBe(false);
+  });
+
   it("rejects with E_SCENARIO_INVALID when the scenario file doesn't exist", async () => {
     projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-preflight-"));
     const err = await runCommand(

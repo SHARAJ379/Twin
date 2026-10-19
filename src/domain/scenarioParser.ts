@@ -178,7 +178,14 @@ function unquotedTemplatesOnLines(source: string, errorLines: (number | undefine
 }
 
 /** Parses + validates scenario.yaml: YAML syntax, then JSON Schema shape, then semantic rules (§7.1). */
-export function parseScenarioYaml(yamlText: string, options: { knownInstances?: string[] } = {}): ScenarioParseResult {
+export function parseScenarioYaml(
+  yamlText: string,
+  /**
+   * `knownChecks`: the check ids a step may name. Left out, any is accepted -
+   * domain/ can't know which checks the caller has registered.
+   */
+  options: { knownInstances?: string[]; knownChecks?: readonly string[] } = {}
+): ScenarioParseResult {
   const knownInstances = options.knownInstances ?? ["A", "B"];
   const doc = parseDocument(yamlText);
 
@@ -235,13 +242,19 @@ export function parseScenarioYaml(yamlText: string, options: { knownInstances?: 
   }
 
   const scenario = data as Scenario;
-  const semanticErrors = checkSemantics(scenario, knownInstances, doc, yamlText);
+  const semanticErrors = checkSemantics(scenario, knownInstances, options.knownChecks, doc, yamlText);
   if (semanticErrors.length > 0) return { ok: false, errors: semanticErrors };
 
   return { ok: true, scenario };
 }
 
-function checkSemantics(scenario: Scenario, knownInstances: string[], doc: Document, source: string): ScenarioParseError[] {
+function checkSemantics(
+  scenario: Scenario,
+  knownInstances: string[],
+  knownChecks: readonly string[] | undefined,
+  doc: Document,
+  source: string
+): ScenarioParseError[] {
   const errors: ScenarioParseError[] = [];
   const idsSoFar = new Set<string>();
   const validVia = new Set([...knownInstances, "any"]);
@@ -273,6 +286,15 @@ function checkSemantics(scenario: Scenario, knownInstances: string[], doc: Docum
               : `"as: ${step.as}" is not one of the scenario's declared clients (${[...declaredClients].join(", ")})`,
           path: `${stepPath}/as`,
           ...locate(doc, `${stepPath}/as`, source)
+        });
+      }
+      // A misspelled check used to be found only after the app had been
+      // booted three times and the whole scenario run twice.
+      if (step.check !== undefined && knownChecks !== undefined && !knownChecks.includes(step.check)) {
+        errors.push({
+          message: `"check: ${step.check}" is not a known check (expected one of ${knownChecks.join(", ")})`,
+          path: `${stepPath}/check`,
+          ...locate(doc, `${stepPath}/check`, source)
         });
       }
       for (const dep of step.after ?? []) {

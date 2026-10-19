@@ -45,6 +45,9 @@ Found in the pre-release audit:
   instance's workspace, and Laravel won't start without `storage/framework/views`. It
   reported `E_BOOT_TIMEOUT`, with a hint about the health path. `storage/` is now copied
   like the rest of the project, one copy per instance, as on two real servers.
+- A misspelled `check:` (`data-consistancy`) was only reported after Twin had booted the
+  app and run the whole scenario twice. `twin run` now rejects it up front with
+  `E_SCENARIO_INVALID`, at its line, naming the four real checks.
 
 ## [0.1.1] - 2026-10-18
 

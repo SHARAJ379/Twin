@@ -131,7 +131,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       });
     }
 
-    const parsed = parseScenarioYaml(scenarioText);
+    const parsed = parseScenarioYaml(scenarioText, { knownChecks: [...builtInChecks.keys()] });
     if (!parsed.ok) {
       throw new TwinError("E_SCENARIO_INVALID", `scenario is invalid:\n${formatScenarioErrors(parsed.errors)}`, {
         hint: "Fix the scenario and re-run `twin run`.",

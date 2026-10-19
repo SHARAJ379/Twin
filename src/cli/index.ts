@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
 
-import { Command, InvalidArgumentError } from "commander";
+import { Command, InvalidArgumentError, Option } from "commander";
 
 import { TwinError } from "../domain/errors.js";
 import { stackIds } from "../domain/stacks/index.js";
@@ -63,7 +63,7 @@ program
 program
   .command("clean")
   .description("Kill any orphaned instance processes, and remove the temp workspaces, left behind by a past run")
-  .option("--project <dir>", "project directory to clean", process.cwd())
+  .addOption(projectOption("project directory to clean"))
   .option("--unlock", "also remove the project's lock even if its holder can't be ruled out - only when no Twin run is in progress", false)
   .action(async (opts: { project: string; unlock: boolean }) => {
     await runGuarded(async () => {
@@ -71,6 +71,11 @@ program
       return 0;
     });
   });
+
+/** `--project`, defaulting to where Twin was run - shown as that in --help, not as one machine's absolute path. */
+function projectOption(description: string): Option {
+  return new Option("--project <dir>", description).default(process.cwd(), "the current directory");
+}
 
 /** Number("abc") is NaN, which would reach AbortSignal.timeout() and fail far from the typo that caused it. */
 function parseMilliseconds(flag: string): (value: string) => number {
@@ -102,7 +107,7 @@ program
   .command("run")
   .description("Boot two instances of your app and check they behave the same")
   .option("--scenario <path>", "path to scenario.yaml (defaults to twin.config.json's \"scenario\")")
-  .option("--project <dir>", "project directory to run", process.cwd())
+  .addOption(projectOption("project directory to run"))
   .option("--stack <id>", `language stack: ${stackIds.join(", ")} (default: detected from marker files)`)
   .option(
     "--start <command>",
@@ -131,7 +136,7 @@ program
   .option("--keep-workspaces", "don't delete the per-instance tmp workspaces on exit", false)
   .option(
     "--allow-remote",
-    "allow running even if a .env/process env var looks like a non-local database or service (I8) - off by default on purpose",
+    "run even if the environment or the code points at what looks like a real (non-local) database or service - off by default on purpose",
     false
   )
   .option(
@@ -184,7 +189,7 @@ program
 program
   .command("report")
   .description("Re-print a past `twin run`'s report without re-running anything")
-  .option("--project <dir>", "project directory the run happened in", process.cwd())
+  .addOption(projectOption("project directory the run happened in"))
   .option("--run <id>", "a specific run id (defaults to the most recent run)")
   .option("--format <format>", "terminal, json, or markdown", "terminal")
   .action(async (opts: { project: string; run?: string; format: string }) => {
@@ -201,7 +206,7 @@ program
 program
   .command("init")
   .description("Scaffold a starter scenario.yaml and twin.config.json")
-  .option("--project <dir>", "project directory to scaffold into", process.cwd())
+  .addOption(projectOption("project directory to scaffold into"))
   .option("--scenario <path>", "where to write the starter scenario", "scenario.yaml")
   .option("--force", "overwrite an existing scenario.yaml / twin.config.json", false)
   .action(async (opts: { project: string; scenario: string; force: boolean }) => {

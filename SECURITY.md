@@ -35,10 +35,14 @@ Twin is a local developer tool, not a sandboxed execution environment. Running `
   source files. It does write its reports and logs to `.twin/` in the project, links your
   dependency folders (`node_modules`, a Python virtualenv, `vendor`) into each workspace rather
   than copying them, and runs your `setup` command (if any) in the project itself.
-- Runs a local HTTP proxy bound to loopback addresses only, for the lifetime of the run.
+- Runs a local HTTP proxy bound to loopback addresses only, for the lifetime of the run. It
+  forwards only to the app's own instances, and a scenario's requests only ever go to that
+  proxy: a step whose path names another host (an absolute URL, or `//host/...`, written in
+  the scenario or saved from a response) fails without being sent.
 - **`twin clean` trusts the project's `.twin/` folder.** It reads the process ids earlier runs
   recorded there and stops those processes, after checking that each one's command line still
-  matches what Twin started. Like `twin run`, only use it on projects you trust.
+  matches what Twin started. It ignores a record no instance could have - pid 0 or 1, a
+  negative pid, no command, or its own pid. Like `twin run`, only use it on projects you trust.
 
 If you're running `twin run` in CI, treat it the same as any other step that executes your
 application code: it has the same access to secrets/environment as the job it runs in.
@@ -48,8 +52,11 @@ application code: it has the same access to secrets/environment as the job it ru
 Twin refuses to run when your app is configured to use a datastore it doesn't consider
 local. It looks at every `.env*` file in the project (except templates like
 `.env.example`), your shell's environment, `twin.config.json`'s `env`, `--env`, and
-connection strings written into your code. The refusal names the host and where it was
-set.
+connection strings written into your code. It reads hosts from connection URLs (including
+their `host`/`hostaddr` query parameters), from `*_HOST`-style settings, and from the DSNs
+that name the host as a parameter: PHP PDO (`mysql:host=...`), go-sql-driver/mysql
+(`user@tcp(host:3306)/db`) and libpq key/value strings (`host=... dbname=...`). The
+refusal names the host and where it was set.
 
 Where the line falls is deliberate, and worth knowing if your network has short internal
 hostnames:
@@ -73,4 +80,5 @@ Everything Twin saves is masked first. Reports and `results.json` keep only a sh
 of headers, with cookie values hidden, and mask passwords, tokens, keys and anything
 shaped like a credential in request and response bodies. Each copy's log (and the part
 of it printed when an app fails to start, which can end up in CI output) has your env's
-secret values, URL passwords and bearer tokens removed.
+secret values, URL passwords and bearer tokens removed. The same masking applies to the
+start, build and setup commands wherever Twin prints or saves them.

@@ -10,10 +10,24 @@ The same small app in five languages, twice:
   and keeps items and uploads at paths every instance is pointed at. `twin run`
   inside it exits `0` with no extra flags.
 
+From the root of this repository (the same commands work in Windows PowerShell):
+
 ```bash
-cd examples/fixed-express && npm ci && twin run    # exit 0
-cd examples/broken-express && npm ci && twin run   # exit 1
+cd examples/broken-express
+npm ci
+twin run
 ```
+
+That exits `1`. To see the fixed one pass (exit `0`):
+
+```bash
+cd ../fixed-express
+npm ci
+twin run
+```
+
+The Python, Go, Ruby and PHP examples need only that language installed: `cd` into one
+and run `twin run`, no `npm ci`.
 
 ## Where the fixed apps' shared storage comes from
 

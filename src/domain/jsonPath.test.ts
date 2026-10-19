@@ -43,4 +43,15 @@ describe("extractJsonPath", () => {
   it("still reads a real index", () => {
     expect(extractJsonPath({ items: ["first", "second"] }, "$.items[1]")).toBe("second");
   });
+
+  // Found in the pre-release audit: a parsed body is a plain object, so a
+  // field it doesn't have but Object.prototype does resolved to a function -
+  // which `save:` then stored as the function's source.
+  it("matches nothing for a field the body doesn't have, even one every object inherits", () => {
+    for (const path of ["$.constructor", "$.toString", "$.user.hasOwnProperty", "$.__proto__"]) {
+      expect(() => extractJsonPath({ user: { name: "alice" } }, path), path).toThrow(/did not match anything/);
+    }
+    // ...while a body that really has such a field still reads it.
+    expect(extractJsonPath(JSON.parse('{"constructor": "Ada"}'), "$.constructor")).toBe("Ada");
+  });
 });

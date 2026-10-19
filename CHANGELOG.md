@@ -48,6 +48,9 @@ Found in the pre-release audit:
 - A misspelled `check:` (`data-consistancy`) was only reported after Twin had booted the
   app and run the whole scenario twice. `twin run` now rejects it up front with
   `E_SCENARIO_INVALID`, at its line, naming the four real checks.
+- A `save:` or `jsonPath:` path naming a field the response didn't have, but every
+  JavaScript object inherits (`$.constructor`, `$.toString`), matched a built-in function
+  instead of reporting "did not match anything".
 
 ## [0.1.1] - 2026-10-18
 

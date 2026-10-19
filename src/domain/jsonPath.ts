@@ -56,7 +56,9 @@ export function extractJsonPath(value: unknown, path: string): unknown {
       const idx = /^-?\d+$/.test(token) ? Number(token) : Number.NaN;
       current = Number.isInteger(idx) ? current[idx] : undefined;
     } else if (typeof current === "object") {
-      current = (current as Record<string, unknown>)[token];
+      // Own fields only: `$.constructor` on a body without one is no match,
+      // not Object's constructor function (cf. renderTemplate in template.ts).
+      current = Object.hasOwn(current, token) ? (current as Record<string, unknown>)[token] : undefined;
     } else {
       throw new JsonPathError(`JSONPath "${path}" cannot index into a primitive value at "${token}"`);
     }

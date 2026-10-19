@@ -92,6 +92,12 @@ describe("the note that Twin doesn't remove what a run writes to the database", 
     expect(said[0]).toContain("DATABASE_URL");
   }, 90_000);
 
+  // The run's own throwaway directory, which Twin creates and removes.
+  it("isn't said for a database under {{shared}}, even with a real one in the project's .env", async () => {
+    await writeFile(path.join(projectDir, ".env"), "DATABASE_URL=postgres://localhost:5432/dev\n", "utf8");
+    expect(await notes({ DATABASE_URL: "sqlite:///{{shared}}/twin.db" })).toEqual([]);
+  }, 90_000);
+
   it("is said for a connection string written into the code", async () => {
     await writeFile(path.join(projectDir, "db.js"), 'module.exports = "mongodb://localhost:27017/app";\n', "utf8");
     const said = await notes({});

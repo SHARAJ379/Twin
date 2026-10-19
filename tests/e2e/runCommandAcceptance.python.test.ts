@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCommand, type RunOptions } from "../../src/cli/commands/run.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import { expectBrokenExampleReport, expectFixedExampleReport } from "./helpers/exampleReport.js";
 import { runtimeMissing } from "./helpers/fixtureRequirements.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +48,7 @@ describe.skipIf(pythonMissing)("twin run against a live Python app: broken => FA
       logger
     );
     expect(exitCode).toBe(1);
+    await expectBrokenExampleReport(brokenPythonDir);
   }, 150_000);
 
   // As shipped: no flags, no env. Its twin.config.json points every instance
@@ -55,5 +57,6 @@ describe.skipIf(pythonMissing)("twin run against a live Python app: broken => FA
     twinDirsToClean.push(path.join(fixedPythonDir, ".twin"));
     const exitCode = await runCommand({ projectDir: fixedPythonDir, env: {}, keepWorkspaces: false, allowRemote: false }, logger);
     expect(exitCode).toBe(0);
+    await expectFixedExampleReport(fixedPythonDir);
   }, 150_000);
 });

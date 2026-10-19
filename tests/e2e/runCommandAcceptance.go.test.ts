@@ -11,6 +11,7 @@ import { compiledBinaryPath } from "../../src/domain/compiledBinary.js";
 import { quoteForShell } from "../../src/domain/shellQuote.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
 import type { Logger } from "../../src/ports/logger.js";
+import { expectBrokenExampleReport, expectFixedExampleReport } from "./helpers/exampleReport.js";
 import { runtimeMissing } from "./helpers/fixtureRequirements.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -79,6 +80,7 @@ describe.skipIf(goMissing)("twin run against a live Go app: broken => FAIL, fixe
       logger
     );
     expect(exitCode).toBe(1);
+    await expectBrokenExampleReport(brokenGoDir);
     // "go run ." is what `twin init` writes, so it's still compiled once and started as an executable.
     const expected = compiledFrom(brokenGoDir);
     expect(stack()).toMatchObject({ start: expected.start, compile: expected.compile });
@@ -92,6 +94,7 @@ describe.skipIf(goMissing)("twin run against a live Go app: broken => FAIL, fixe
     const { logger, stack } = recordingStack();
     const exitCode = await runCommand({ projectDir: fixedGoDir, env: {}, keepWorkspaces: false, allowRemote: false }, logger);
     expect(exitCode).toBe(0);
+    await expectFixedExampleReport(fixedGoDir);
     expect(stack()).toMatchObject({ start: compiledFrom(fixedGoDir).start });
   }, 150_000);
 });

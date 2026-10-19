@@ -394,3 +394,44 @@ describe("findDatastoreSettings", () => {
     ).toEqual(["db.js", "cache.py"]);
   });
 });
+
+// The connection-string forms Twin's own PHP, Go and Python stacks use, which
+// name their host as a parameter rather than in a URL authority - each of
+// these walked past the refusal to a production database.
+describe("scanForRemoteResources: hosts given as a parameter", () => {
+  const remote = "db.prod-corp.com";
+
+  it.each([
+    ["a PDO DSN (PHP)", "DB_DSN", `pgsql:host=${remote};dbname=app`],
+    ["a PDO DSN with a port", "DATABASE_DSN", `mysql:host=${remote};port=3306;dbname=app`],
+    ["a go-sql-driver/mysql DSN", "DATABASE_URL", `user:pass@tcp(${remote}:3306)/app`],
+    ["a libpq key/value string", "DATABASE_URL", `host=${remote} port=5432 dbname=app`],
+    ["libpq's host query parameter", "DATABASE_URL", `postgresql:///app?host=${remote}`],
+    ["a host query parameter beside a local authority", "DATABASE_URL", `postgresql://localhost/app?host=${remote}`],
+    ["libpq's hostaddr", "DATABASE_URL", "postgresql://localhost/app?hostaddr=52.1.2.3"]
+  ])("flags %s", (_label, key, value) => {
+    expect(scanForRemoteResources({ [key]: value }).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["a local PDO DSN", "DB_DSN", "mysql:host=localhost;dbname=app"],
+    ["a local go-sql-driver/mysql DSN", "DATABASE_URL", "user:pass@tcp(127.0.0.1:3306)/app"],
+    ["a container-local libpq string", "DATABASE_URL", "host=db port=5432 dbname=app"],
+    ["a libpq unix socket", "DATABASE_URL", "host=/var/run/postgresql dbname=app"],
+    ["a go-sql-driver/mysql unix socket", "DATABASE_URL", "user:pass@unix(/tmp/mysql.sock)/app"]
+  ])("does not flag %s", (_label, key, value) => {
+    expect(scanForRemoteResources({ [key]: value })).toEqual([]);
+  });
+
+  it("flags a PDO or go-sql-driver DSN written into the source", () => {
+    const found = scanSourceForRemoteResources([
+      { path: "db.php", content: `$pdo = new PDO("mysql:host=${remote};dbname=app", $user, $pass);` },
+      { path: "main.go", content: `sql.Open("mysql", "app:secret@tcp(${remote}:3306)/app")` },
+      { path: "local.php", content: `$pdo = new PDO('mysql:host=localhost;dbname=app');` }
+    ]);
+    expect(found.map((f) => [f.source, f.host])).toEqual([
+      ["db.php", remote],
+      ["main.go", remote]
+    ]);
+  });
+});

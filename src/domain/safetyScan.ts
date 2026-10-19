@@ -320,10 +320,10 @@ const LOCAL_EMULATOR_KEY_PATTERN =
  * than being guessed at.
  */
 function hostsIn(value: string, allowBareHost: boolean): string[] {
-  const hosts = authorityHosts(value, allowBareHost);
   // Cloudinary's "host" is the account's cloud name, not a hostname - it is
   // never dotted, and it is always the real account.
-  if (schemeOf(value) === "cloudinary") return hosts;
+  if (schemeOf(value) === "cloudinary") return authorityHosts(value, allowBareHost);
+  const hosts = [...authorityHosts(value, allowBareHost), ...parameterHosts(value)];
   // A dotless name is a docker-compose service or a local alias whether it
   // arrives bare (`DB_HOST=db`) or inside a URL (`postgres://u@db:5432`) -
   // the URL form used to be refused, which refused every Compose project once
@@ -352,6 +352,24 @@ function spilledPasswordHost(rest: string, authority: string, authorityEnd: numb
   const afterPassword = rest.slice(at + 1);
   const hostEnd = afterPassword.search(/[/?#]/);
   return hostEnd === -1 ? afterPassword : afterPassword.slice(0, hostEnd);
+}
+
+/**
+ * `host=`/`hostaddr=`, wherever a driver reads them: a libpq key/value string
+ * (`host=db.corp.com dbname=app`), a URL's query (`postgresql:///app?host=...`,
+ * which libpq prefers to the authority), or a PHP PDO DSN (`mysql:host=...;`).
+ */
+const HOST_PARAMETER = /(?:^|[\s;?&:])(?:host|hostaddr)\s*=\s*([^\s;&]+)/gi;
+/** go-sql-driver/mysql's `user:pass@tcp(host:3306)/db`. A `unix(...)` socket names no host. */
+const GO_MYSQL_TCP = /@tcp6?\(([^)]*)\)/gi;
+
+/** Hosts a connection string names as a parameter rather than in a URL authority. Unfiltered. */
+function parameterHosts(value: string): string[] {
+  const hosts: string[] = [];
+  // libpq takes a comma-separated list here, as a URL authority does.
+  for (const match of value.matchAll(HOST_PARAMETER)) hosts.push(...match[1]!.split(","));
+  for (const match of value.matchAll(GO_MYSQL_TCP)) hosts.push(match[1]!);
+  return hosts.map(stripPort).filter((host) => host.length > 0);
 }
 
 /** Every host named in a value's authority, unfiltered: `localhost` included. */
@@ -465,6 +483,13 @@ export function scanForThirdPartyKeys(env: Readonly<Record<string, string>>): st
 const URL_LITERAL = /["'`]((?:jdbc:)?[a-z][a-z0-9+.-]*:\/\/[^"'`\s]+)["'`]/gi;
 
 /**
+ * A quoted DSN with no `://` to find it by: PHP's `new PDO("mysql:host=...")`
+ * and go-sql-driver's `"user:pass@tcp(host:3306)/db"`. Group 1 is the DSN.
+ */
+const DSN_LITERAL =
+  /["'`]((?:mysql|pgsql|sqlsrv|dblib|oci|firebird|informix|ibm|cubrid):[^"'`\s]*host=[^"'`\s]+|[^"'`\s]*@tcp6?\([^"'`\s)]*\)[^"'`\s]*)["'`]/gi;
+
+/**
  * A connection string written into the code itself:
  * `mongoose.connect("mongodb+srv://...")`. No env scan can see it, and it is
  * the shape every quick-start tutorial pastes in. Only quoted literals with a
@@ -479,10 +504,13 @@ export function scanSourceForRemoteResources(
   const found: RemoteResourceRef[] = [];
   const seen = new Set<string>();
   for (const file of files) {
-    for (const match of file.content.matchAll(URL_LITERAL)) {
-      const url = match[1]!;
-      if (!isDatastoreUrl(url) || /\$\{|\{\{/.test(url)) continue;
-      for (const host of hostsIn(url, false)) {
+    const literals = [
+      ...[...file.content.matchAll(URL_LITERAL)].map((match) => match[1]!).filter(isDatastoreUrl),
+      ...[...file.content.matchAll(DSN_LITERAL)].map((match) => match[1]!)
+    ];
+    for (const literal of literals) {
+      if (/\$\{|\{\{/.test(literal)) continue;
+      for (const host of hostsIn(literal, false)) {
         if (isLocalHost(host) || isAllowedHost(host, allowedHosts) || seen.has(`${file.path}|${host}`)) continue;
         seen.add(`${file.path}|${host}`);
         found.push({ key: "a connection string in the source", host, source: file.path });

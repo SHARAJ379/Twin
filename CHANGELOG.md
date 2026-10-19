@@ -20,6 +20,11 @@ shift between minor versions.
 - Twin's local proxy only ever forwards to the app's instances. A request whose target
   named a host of its own was forwarded to that host; it is now refused with `400`, and
   a path beginning `//` reaches the instance as a path.
+- The remote-database refusal now reads the connection-string forms that name their
+  host as a parameter: PHP PDO DSNs (`mysql:host=...;dbname=...`), go-sql-driver/mysql
+  DSNs (`user:pass@tcp(host:3306)/db`), libpq key/value strings (`host=... dbname=...`)
+  and a URL's `host`/`hostaddr` query parameter - in the environment and written into
+  the code. A real database configured one of these ways got past it.
 
 ### Changed
 

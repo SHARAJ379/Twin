@@ -88,6 +88,26 @@ describe("renderTerminalReport", () => {
     expect(renderMarkdownReport("s", findings, computeVerdict(findings), "ephemeral")).not.toContain("above");
   });
 
+  // restart-persistence is refused by the *same* instance after its restart,
+  // which its summary says - the note under it used to say "on another instance".
+  it("doesn't say a blocked restart-persistence was refused on another instance", () => {
+    const session: Finding = {
+      ...failFinding,
+      checkId: "session-survives-switch",
+      title: "Session survives instance switch",
+      summary: "logged in, then rejected (status 401)"
+    };
+    const restart: Finding = {
+      ...failFinding,
+      checkId: "restart-persistence",
+      summary: "the read-back after the restart was refused by that same instance after it restarted",
+      blockedBy: "auth"
+    };
+    const findings = [session, restart];
+    expect(renderTerminalReport(findings, computeVerdict(findings), "ephemeral")).not.toContain("another instance");
+    expect(renderMarkdownReport("s", findings, computeVerdict(findings), "ephemeral")).not.toContain("another instance");
+  });
+
   it("still gives one fix prompt when every failure is blocked - the 401 is the bug", () => {
     const blocked: Finding = { ...failFinding, blockedBy: "auth" };
     const other: Finding = { ...failFinding, checkId: "file-consistency", blockedBy: "auth" };

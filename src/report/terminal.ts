@@ -7,7 +7,7 @@ import { getsFixPrompt, statusLabel, verdictSentence } from "./verdictSummary.js
 const ICON: Record<Finding["status"], string> = { pass: "✓", fail: "✗", error: "⚠", skipped: "·" };
 
 const BLOCKED_NOTE =
-  "  blocked: rejected (401/403) on another instance, so this check never reached what it tests - the session bug in this report is the cause, not a separate one";
+  "  blocked: rejected (401/403), so this check never reached what it tests - the session bug in this report is the cause, not a separate one";
 
 function renderFinding(finding: Finding, findings: readonly Finding[], profile: DeploymentProfile): string[] {
   const lines: string[] = [];

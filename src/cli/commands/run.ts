@@ -36,6 +36,7 @@ import { HttpProxy } from "../../infra/proxy/httpProxy.js";
 import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
 import { loadSourceFilesForSafetyScan } from "../../infra/safety/loadSourceFiles.js";
 import { detectStack } from "../../infra/stack/detectStack.js";
+import { withProjectVirtualenvs } from "../../infra/stack/virtualenvs.js";
 import { FsWorkspaceManager } from "../../infra/workspace/fsWorkspaceManager.js";
 import type { Logger } from "../../ports/logger.js";
 import { buildEvidenceLedger } from "../../report/evidenceLedger.js";
@@ -234,6 +235,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       start = explicitStart;
       logger.warn(`couldn't identify the stack - continuing with --start and every stack's tracer rules`);
     }
+    stack = await withProjectVirtualenvs(stack, options.projectDir);
 
     if (start === undefined) {
       throw new TwinError(

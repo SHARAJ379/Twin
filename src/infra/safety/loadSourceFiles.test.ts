@@ -38,7 +38,10 @@ describe("loadSourceFilesForSafetyScan", () => {
       "lib/user_spec.rb": "",
       "app/store_test.go": "",
       "test_db.py": "",
-      "node_modules/pg/index.js": ""
+      "node_modules/pg/index.js": "",
+      // a virtualenv under a name no list knows, found by its pyvenv.cfg
+      ".venv-backend/pyvenv.cfg": "home = /usr/bin",
+      ".venv-backend/Lib/site-packages/psycopg2/extensions.py": ""
     };
     for (const [name, content] of Object.entries(files)) {
       await mkdir(path.dirname(path.join(dir, name)), { recursive: true });

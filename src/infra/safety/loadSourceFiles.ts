@@ -1,6 +1,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { isVirtualenv } from "../stack/virtualenvs.js";
+
 /** Dependencies, build output, VCS metadata and Twin's own artifacts: none of it is the app's own connection code. */
 const IGNORED_DIRS = new Set([
   ".git",
@@ -63,7 +65,8 @@ export async function loadSourceFilesForSafetyScan(
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (!IGNORED_DIRS.has(entry.name)) await walk(fullPath);
+        // A virtualenv under any name (`.venv-backend`) is installed libraries, not the app.
+        if (!IGNORED_DIRS.has(entry.name) && !(await isVirtualenv(fullPath))) await walk(fullPath);
         continue;
       }
       const ext = path.extname(entry.name);

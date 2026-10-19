@@ -19,6 +19,9 @@ Found by running Twin against a real FastAPI app:
 - Every run said "the app is configured with a database ... Twin does not remove them"
   even when `DATABASE_URL` pointed under `{{shared}}`, the throwaway directory Twin
   creates and removes itself.
+- A Python virtualenv not named `.venv` or `venv` (`.venv-backend`, say) was copied
+  into every instance's workspace and read by the safety scan and the tracer. Any
+  folder with a `pyvenv.cfg` is now shared like `.venv` and skipped by every scan.
 
 ## [0.1.1] - 2026-10-18
 

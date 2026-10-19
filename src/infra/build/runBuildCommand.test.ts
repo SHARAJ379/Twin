@@ -21,4 +21,14 @@ describe("runBuildCommand", () => {
     expect((err as TwinError).message).toContain("instance A");
     expect(((err as TwinError).details?.logTail as string[]).join("\n")).toContain("error TS2304");
   }, 30_000);
+
+  // Its message is printed, and kept by CI: a secret in the command is masked
+  // there as it is in the output.
+  it("masks secrets in the command it names when it fails", async () => {
+    const redactLine = (line: string): string => line.split("Zq9xS3cret").join("<redacted>");
+    const err = await runBuildCommand('node -e "process.exitCode = 4" Zq9xS3cret', { cwd: process.cwd(), target: "the project", redactLine }).catch((e: unknown) => e);
+
+    expect((err as TwinError).message).toContain("<redacted>");
+    expect((err as TwinError).message).not.toContain("Zq9xS3cret");
+  }, 30_000);
 });

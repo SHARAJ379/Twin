@@ -20,6 +20,8 @@ export async function runBuildCommand(command: string, options: BuildCommandOpti
   // Redacted like any other captured output: a failing build prints the
   // environment it was given more often than an app does.
   const logs = createLogSink({ redactLine: options.redactLine });
+  // As the errors below print it: their message reaches the terminal, and CI's log.
+  const shown = options.redactLine?.(command) ?? command;
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, {
       cwd: options.cwd,
@@ -32,7 +34,7 @@ export async function runBuildCommand(command: string, options: BuildCommandOpti
     child.stderr?.on("data", (chunk: Buffer) => logs.write(chunk));
     child.once("error", (err) => {
       reject(
-        new TwinError("E_BUILD_FAILED", `Failed to run build command \`${command}\` for ${options.target}.`, {
+        new TwinError("E_BUILD_FAILED", `Failed to run build command \`${shown}\` for ${options.target}.`, {
           details: { ...options.details },
           cause: err
         })
@@ -48,7 +50,7 @@ export async function runBuildCommand(command: string, options: BuildCommandOpti
       reject(
         new TwinError(
           "E_BUILD_FAILED",
-          `Build command \`${command}\` failed for ${options.target} (exit code ${code ?? "null"}, signal ${signal ?? "null"}).`,
+          `Build command \`${shown}\` failed for ${options.target} (exit code ${code ?? "null"}, signal ${signal ?? "null"}).`,
           {
             hint: options.hint ?? "Run the build command manually to see the full error.",
             details: { ...options.details, logTail: logs.lines(30) }

@@ -25,6 +25,10 @@ shift between minor versions.
   DSNs (`user:pass@tcp(host:3306)/db`), libpq key/value strings (`host=... dbname=...`)
   and a URL's `host`/`hostaddr` query parameter - in the environment and written into
   the code. A real database configured one of these ways got past it.
+- The start, build and setup commands are now masked like the output they produce
+  wherever Twin prints or saves them: the `setup: running` line, boot, build and setup
+  errors, and the run's `pids.json`. A secret from the env written into one of those
+  commands was printed as-is, which CI keeps in its log.
 
 ### Changed
 

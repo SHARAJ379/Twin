@@ -347,7 +347,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
 
     const runSetup = async (phase: string): Promise<void> => {
       if (setup === undefined) return;
-      logger.info(`setup: running \`${setup}\` before ${phase}`);
+      logger.info(`setup: running \`${redactLogLine(setup)}\` before ${phase}`);
       await runSetupCommand(setup, { cwd: options.projectDir, env: instanceEnv, phase, redactLine: redactLogLine });
     };
     // Every run writes real records through the app, into whatever database

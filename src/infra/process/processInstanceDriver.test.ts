@@ -100,6 +100,19 @@ describe("ProcessInstanceDriver (against examples/broken-express)", () => {
     expect((err as TwinError).code).toBe("E_BOOT_CRASH");
   });
 
+  // The hint names the start command, and is printed - in CI, kept.
+  it("masks the env's secrets in the start command an E_BOOT_CRASH names", async () => {
+    const redactLine = (line: string): string => line.split("Zq9xS3cret").join("<redacted>");
+    const redacting = new ProcessInstanceDriver(new FsWorkspaceManager(root), logger, undefined, undefined, redactLine);
+    const ws = await redacting.prepare(workspaceSpec("A"));
+    const crashSpec: StartSpec = { ...startSpec, command: 'node -e "process.exit(0)" Zq9xS3cret', bootTimeoutMs: 15_000 };
+
+    const err = await redacting.start(ws, crashSpec).catch((e: unknown) => e);
+    expect((err as TwinError).code).toBe("E_BOOT_CRASH");
+    expect((err as TwinError).hint).toContain("<redacted>");
+    expect(JSON.stringify({ message: (err as TwinError).message, hint: (err as TwinError).hint })).not.toContain("Zq9xS3cret");
+  });
+
   it("snapshot() reflects a file the instance writes into its own workspace", async () => {
     const ws = await driver.prepare(workspaceSpec("A"));
     const handle = await driver.start(ws, startSpec);

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { runCommand } from "../../src/cli/commands/run.js";
 import { ConsoleLogger } from "../../src/infra/log/consoleLogger.js";
+import type { Logger } from "../../src/ports/logger.js";
 
 const logger = new ConsoleLogger({ level: "error" });
 
@@ -117,5 +118,37 @@ describe("the setup command", () => {
     expect(err).toMatchObject({ code: "E_SETUP_FAILED" });
     expect((err as { details: { logTail: string[] } }).details.logTail.join("\n")).toContain("could not reach the database");
     await expect(readFile(path.join(dbDir, "db.json"), "utf8")).rejects.toThrow();
+  }, 90_000);
+
+  // The command is printed before each phase, and CI keeps that output: a
+  // secret the env holds, written into the command, must be masked there too.
+  it("masks the env's secrets in the setup command it prints, and in its error", async () => {
+    const secret = "Zq9xSetupS3cret";
+    await project({ scenario: "scenario.yaml", setup: `node reset.js ${secret}` });
+    const lines: string[] = [];
+    const capture: Logger = {
+      debug: (message, meta) => lines.push(message + JSON.stringify(meta ?? {})),
+      info: (message, meta) => lines.push(message + JSON.stringify(meta ?? {})),
+      warn: (message, meta) => lines.push(message + JSON.stringify(meta ?? {})),
+      error: (message, meta) => lines.push(message + JSON.stringify(meta ?? {})),
+      child: () => capture
+    };
+
+    const err = await runCommand(
+      {
+        projectDir,
+        env: { DB_FILE: path.join(dbDir, "db.json"), DB_PASSWORD: secret, FAIL_SETUP: "1" },
+        start: "node server.js",
+        bootTimeoutMs: 30_000,
+        keepWorkspaces: false,
+        allowRemote: false
+      },
+      capture
+    ).catch((e: unknown) => e);
+
+    expect(lines.some((line) => line.startsWith("setup: running"))).toBe(true);
+    expect(lines.join("\n")).not.toContain(secret);
+    expect(err).toMatchObject({ code: "E_SETUP_FAILED" });
+    expect((err as Error).message).not.toContain(secret);
   }, 90_000);
 });

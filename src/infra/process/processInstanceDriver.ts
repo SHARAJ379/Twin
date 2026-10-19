@@ -136,6 +136,11 @@ export class ProcessInstanceDriver implements InstanceDriver {
     private readonly redactLogLine?: (line: string) => string
   ) {}
 
+  /** A command as Twin prints or saves it: with the env's secrets masked, like the output it ran. */
+  private shownCommand(command: string): string {
+    return this.redactLogLine?.(command) ?? command;
+  }
+
   private openLogSink(instance: string): LogSink {
     if (this.logDir === undefined) return createLogSink({ redactLine: this.redactLogLine });
 
@@ -304,7 +309,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
     const pid = child.pid;
     if (pid === undefined) {
       settled = true;
-      throw new TwinError("E_BOOT_CRASH", `Failed to spawn \`${spec.command}\` for instance ${ws.instance}.`, {
+      throw new TwinError("E_BOOT_CRASH", `Failed to spawn \`${this.shownCommand(spec.command)}\` for instance ${ws.instance}.`, {
         hint: "Check that the start command is correct and the project is installed.",
         details: { instance: ws.instance }
       });
@@ -378,7 +383,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
       if (escaped) {
         throw new TwinError(
           "E_BOOT_DETACHED",
-          `\`${spec.command}\` exited${exitCode === 0 ? " successfully" : ""} instead of staying in the foreground, so instance ${
+          `\`${this.shownCommand(spec.command)}\` exited${exitCode === 0 ? " successfully" : ""} instead of staying in the foreground, so instance ${
             ws.instance
           } never served from a process Twin can see or stop.`,
           {
@@ -392,7 +397,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
       if (spawnError !== undefined) {
         throw new TwinError(
           "E_BOOT_CRASH",
-          `Failed to spawn \`${spec.command}\` for instance ${ws.instance}: ${
+          `Failed to spawn \`${this.shownCommand(spec.command)}\` for instance ${ws.instance}: ${
             spawnError instanceof Error ? spawnError.message : String(spawnError)
           }`,
           {
@@ -446,8 +451,8 @@ export class ProcessInstanceDriver implements InstanceDriver {
         {
           hint: alreadyDead
             ? exitCode === 0
-              ? `\`${spec.command}\` finished instead of running a server. If it starts the server in the background or hands it to a daemon (\`pm2 start\`, --daemon), run it in the foreground instead; otherwise the log tail below is the app's own account of why it stopped.`
-              : `\`${spec.command}\` exited instead of serving. If the app needs compiling first, pass --build "<command>". The log tail below is the app's own output.`
+              ? `\`${this.shownCommand(spec.command)}\` finished instead of running a server. If it starts the server in the background or hands it to a daemon (\`pm2 start\`, --daemon), run it in the foreground instead; otherwise the log tail below is the app's own account of why it stopped.`
+              : `\`${this.shownCommand(spec.command)}\` exited instead of serving. If the app needs compiling first, pass --build "<command>". The log tail below is the app's own output.`
             : `The app started but never answered ${spec.healthPath} with a non-5xx status. Check --health-path (is it really ${spec.healthPath}?) and --port-env (does the app read ${spec.portEnv}?).${
                 logs.lines(1).length === 0
                   ? " It printed nothing at all, which usually means it was still starting up - compiling, say (`go run`, `ts-node`): move that into --build, which the boot timeout doesn't count, or raise --boot-timeout-ms."
@@ -474,7 +479,7 @@ export class ProcessInstanceDriver implements InstanceDriver {
       if (spawnError === undefined && (handedOff || (await isPortHeldBySomeoneElse(port)))) {
         throw new TwinError(
           "E_BOOT_DETACHED",
-          `\`${spec.command}\` exited instead of staying in the foreground, so instance ${ws.instance} answered from a process Twin can't see or stop.`,
+          `\`${this.shownCommand(spec.command)}\` exited instead of staying in the foreground, so instance ${ws.instance} answered from a process Twin can't see or stop.`,
           {
             hint: `Twin has to own the server process to restart it and clean it up. Run it in the foreground: drop a trailing \`&\`, use \`pm2-runtime start\` rather than \`pm2 start\`, and leave off any --daemon / -d flag. The server is probably still running outside Twin - check port ${port} and stop it yourself.`,
             details: { instance: ws.instance, port, logTail: logs.lines(30) }
@@ -497,7 +502,9 @@ export class ProcessInstanceDriver implements InstanceDriver {
     const records: PidRecord[] = [...this.running.entries()].map(([instance, r]) => ({
       pid: r.pid,
       instance,
-      command: r.startSpec.command,
+      // pids.json sits in the run's directory, which CI uploads as an artifact.
+      // Only the command's program is matched against later (reapOrphans).
+      command: this.shownCommand(r.startSpec.command),
       startedAt: r.startedAt
     }));
     await writePidFile(this.pidFilePath, records);

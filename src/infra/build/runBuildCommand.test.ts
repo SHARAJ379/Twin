@@ -12,7 +12,8 @@ describe("runBuildCommand", () => {
   });
 
   // The logTail is the whole diagnosis Twin prints for a failed build, and a
-  // compiler prints its error last - after any amount of other output.
+  // compiler prints its error last. Read on 'exit', the tail came back
+  // without it on Linux CI (run 39222250425); it never did on Windows.
   it("keeps the build's last line in the logTail, however much it printed first", async () => {
     const err = await runBuildCommand(LOUD_FAILURE, { cwd: process.cwd(), target: "instance A" }).catch((e: unknown) => e);
 

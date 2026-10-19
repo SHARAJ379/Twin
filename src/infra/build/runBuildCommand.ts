@@ -38,7 +38,9 @@ export async function runBuildCommand(command: string, options: BuildCommandOpti
         })
       );
     });
-    child.once("exit", (code, signal) => {
+    // 'close', not 'exit': see runSetupCommand - the error a failing build
+    // prints last could still be in the pipes when 'exit' fired.
+    child.once("close", (code, signal) => {
       if (code === 0) {
         resolve();
         return;

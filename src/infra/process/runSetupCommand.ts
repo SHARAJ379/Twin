@@ -39,7 +39,10 @@ export async function runSetupCommand(
         })
       );
     });
-    child.once("exit", (code, signal) => {
+    // 'close', not 'exit': 'exit' can fire before the pipes have drained, and
+    // a failing command prints its actual error last. On Linux CI the logTail
+    // came back without it (run 39222250425); Windows happens not to show it.
+    child.once("close", (code, signal) => {
       if (code === 0) {
         resolve();
         return;

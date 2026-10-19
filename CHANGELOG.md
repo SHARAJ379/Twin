@@ -54,10 +54,12 @@ Found in the pre-release audit:
 - An env value with a stray `%` in a `sqlite:` or `file:` path
   (`sqlite:////tmp/100%real.db`) ended `twin run` with a bare "URI malformed".
 - `twin doctor` failed (exit 1) on a machine without git, saying git was needed for
-  `twin init`. Nothing Twin runs uses git; it's only needed to install Twin from source.
-  The git line is now information, never a failure.
+  `twin init`. Nothing Twin runs uses git; it's only needed to download Twin's examples or
+  install Twin from source. The git line is now information, never a failure.
 - A BLOCKED check's note pointed at "the session bug above" even when the session
-  failure was printed below it. It now says "the session bug in this report".
+  failure was printed below it, and said every blocked check was "rejected on another
+  instance" - including `restart-persistence`, which reads back through the instance
+  that restarted. It now says "rejected (401/403)" and "the session bug in this report".
 - The starter `scenario.yaml` from `twin init` sent you to `docs/scenario.schema.json`,
   a path in Twin's own repository rather than your project. It now links to the
   scenario guide online.

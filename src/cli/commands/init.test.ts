@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ConsoleLogger } from "../../infra/log/consoleLogger.js";
+import type { Logger } from "../../ports/logger.js";
 import { initCommand } from "./init.js";
 
 const logger = new ConsoleLogger({ level: "error" });
@@ -38,6 +39,24 @@ describe("initCommand", () => {
     const config = JSON.parse(await readFile(path.join(projectDir, "twin.config.json"), "utf8")) as Record<string, unknown>;
     expect(config.scenario).toBe("scenario.yaml");
     expect(config.start).toBeUndefined();
+  });
+
+  it("points at the subdirectory that holds the app when the root isn't one", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-init-"));
+    await mkdir(path.join(projectDir, "backend"));
+    await writeFile(path.join(projectDir, "backend", "requirements.txt"), "fastapi\n", "utf8");
+    const warnings: string[] = [];
+    const recording: Logger = {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: (message) => void warnings.push(message),
+      error: () => undefined,
+      child: () => recording
+    };
+
+    await initCommand({ projectDir, scenarioPath: "scenario.yaml", force: false }, recording);
+
+    expect(warnings).toContainEqual(expect.stringContaining('"backend" looks like a Python project - run Twin from there (`cd backend`)'));
   });
 
   it("does not overwrite an existing scenario.yaml or twin.config.json without --force", async () => {

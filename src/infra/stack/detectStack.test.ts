@@ -30,6 +30,29 @@ describe("detectStack", () => {
     const err = await detectStack(dir).catch((e: unknown) => e);
     expect(TwinError.isTwinError(err)).toBe(true);
     expect((err as TwinError).code).toBe("E_NO_STACK");
+    expect((err as TwinError).details).toBeUndefined();
+  });
+
+  // Found dogfooding: an app in backend/ with nothing at the root left the user
+  // with "could not tell what kind of project" and no idea where to go.
+  it("names the subdirectories a stack recognises when the root has none", async () => {
+    const dir = await project(
+      {
+        "backend/requirements.txt": "fastapi\n",
+        "frontend/package.json": "{}",
+        "node_modules/x/package.json": "{}",
+        ".github/package.json": "{}",
+        "README.md": "# hi"
+      },
+      ["docs"]
+    );
+
+    const err = (await detectStack(dir).catch((e: unknown) => e)) as TwinError;
+
+    expect(err.code).toBe("E_NO_STACK");
+    expect(err.details).toEqual({ subprojects: ["backend", "frontend"] });
+    expect(err.hint).toContain('"backend" looks like a Python project');
+    expect(err.hint).toContain("run Twin from the one that serves HTTP (`cd backend`)");
   });
 
   it("throws E_AMBIGUOUS_STACK for a polyglot repo, naming the candidates", async () => {

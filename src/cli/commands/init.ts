@@ -105,6 +105,8 @@ export async function initCommand(options: InitOptions, logger: Logger): Promise
   } catch (err) {
     if (!TwinError.isTwinError(err)) throw err;
     logger.warn(`couldn't identify the stack (${err.message}) - set "stack" and "start" in ${TWIN_CONFIG_FILENAME}`);
+    // The app is one directory down: pointing there beats a config written for the wrong directory.
+    if (err.details?.["subprojects"] !== undefined && err.hint !== undefined) logger.warn(err.hint);
   }
 
   const config: TwinConfig = {

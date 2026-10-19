@@ -35,6 +35,30 @@ async function readMarkerFiles(projectDir: string, names: readonly string[]): Pr
   return Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => entry !== undefined));
 }
 
+/** Never an app of their own: dependencies, VCS metadata, Twin's artifacts. */
+const NOT_A_SUBPROJECT = new Set(["node_modules", "vendor", "venv", "env"]);
+
+/**
+ * Immediate subdirectories a stack recognises, for a root no stack does. A
+ * repo with the app in `backend/` and nothing at the top got "could not tell
+ * what kind of project this is" and no idea where to go instead.
+ */
+async function findSubprojects(projectDir: string, entries: readonly string[]): Promise<{ dir: string; stack: string }[]> {
+  const found: { dir: string; stack: string }[] = [];
+  for (const name of [...entries].sort()) {
+    if (name.startsWith(".") || NOT_A_SUBPROJECT.has(name)) continue;
+    let children: string[];
+    try {
+      children = await readdir(path.join(projectDir, name));
+    } catch {
+      continue; // a file, or unreadable
+    }
+    const matches = matchingStacks(children);
+    if (matches.length > 0) found.push({ dir: name, stack: matches.map((m) => m.displayName).join("/") });
+  }
+  return found;
+}
+
 /**
  * Identifies which language stack a project is, and how to boot it.
  * `forcedStackId` (from --stack / twin.config.json) skips identification, which
@@ -55,8 +79,15 @@ export async function detectStack(projectDir: string, forcedStackId?: string): P
   } else {
     const matches = matchingStacks(entries);
     if (matches.length === 0) {
+      const subprojects = await findSubprojects(projectDir, entries);
       throw new TwinError("E_NO_STACK", `could not tell what kind of project "${projectDir}" is`, {
-        hint: `No marker file for any known stack (${stackIds.join(", ")}) was found. Pass --stack <id> and --start "<command>".`
+        hint:
+          subprojects.length > 0
+            ? `${subprojects.map((s) => `"${s.dir}" looks like a ${s.stack} project`).join(", ")} - run Twin from ${
+                subprojects.length === 1 ? "there" : "the one that serves HTTP"
+              } (\`cd ${subprojects[0]!.dir}\`), or pass --stack <id> and --start "<command>" to run it from here.`
+            : `No marker file for any known stack (${stackIds.join(", ")}) was found. Pass --stack <id> and --start "<command>".`,
+        ...(subprojects.length > 0 ? { details: { subprojects: subprojects.map((s) => s.dir) } } : {})
       });
     }
     if (matches.length > 1) {

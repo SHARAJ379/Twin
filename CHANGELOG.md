@@ -22,6 +22,9 @@ Found by running Twin against a real FastAPI app:
 - A Python virtualenv not named `.venv` or `venv` (`.venv-backend`, say) was copied
   into every instance's workspace and read by the safety scan and the tracer. Any
   folder with a `pyvenv.cfg` is now shared like `.venv` and skipped by every scan.
+- `twin init` and `twin run` on a repo with the app in a subfolder said only "could not
+  tell what kind of project" this is. They now name the subfolders a stack recognises
+  (`"backend" looks like a Python project`) and say to run Twin there.
 
 ## [0.1.1] - 2026-10-18
 

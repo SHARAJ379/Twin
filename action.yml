@@ -169,9 +169,14 @@ runs:
         node "$TWIN_CLI" "${ARGS[@]}" || code=$?
 
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        # .twin/latest is a file in the project: only a plain run id goes into
+        # GITHUB_OUTPUT, never a path out of .twin/runs or a second line.
         latest_file="${TWIN_PROJECT_DIR:-.}/.twin/latest"
         if [ -f "$latest_file" ]; then
-          echo "report-dir=${TWIN_PROJECT_DIR:-.}/.twin/runs/$(cat "$latest_file")" >> "$GITHUB_OUTPUT"
+          run_id="$(tr -d '\r\n' < "$latest_file")"
+          if [[ "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && "$run_id" != *..* ]]; then
+            echo "report-dir=${TWIN_PROJECT_DIR:-.}/.twin/runs/$run_id" >> "$GITHUB_OUTPUT"
+          fi
         fi
 
         if [ "$code" = "2" ]; then exit 2; fi

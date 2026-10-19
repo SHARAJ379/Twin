@@ -134,3 +134,43 @@ describe("reportCommand", () => {
     expect(printed).toContain("data-consistency");
   });
 });
+
+// A run id names a directory under .twin/runs, and comes from --run or from
+// .twin/latest - a file in the project. Neither may reach a report elsewhere.
+describe("reportCommand run ids", () => {
+  let projectDir: string;
+
+  afterEach(async () => {
+    await rm(projectDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+
+  async function reportOutsideRuns(): Promise<void> {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-report-"));
+    await mkdir(path.join(projectDir, "outside"), { recursive: true });
+    await writeFile(path.join(projectDir, "outside", "report.md"), "NOT A TWIN REPORT", "utf8");
+    await writeFile(path.join(projectDir, "outside", "report.json"), JSON.stringify({ findings: [], verdict: {} }), "utf8");
+  }
+
+  it.each(["../../outside", "..\\..\\outside", "<absolute>"])("refuses --run %s", async (given) => {
+    await reportOutsideRuns();
+    const run = given === "<absolute>" ? path.join(projectDir, "outside") : given;
+    const printed: string[] = [];
+
+    const err = await reportCommand({ projectDir, run, format: "markdown" }, (text) => printed.push(text)).catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ code: "E_NO_REPORT" });
+    expect(printed).toEqual([]);
+  });
+
+  it("refuses a .twin/latest that points outside .twin/runs", async () => {
+    await reportOutsideRuns();
+    await mkdir(path.join(projectDir, ".twin"), { recursive: true });
+    await writeFile(path.join(projectDir, ".twin", "latest"), "../../outside", "utf8");
+    const printed: string[] = [];
+
+    const err = await reportCommand({ projectDir, format: "markdown" }, (text) => printed.push(text)).catch((e: unknown) => e);
+
+    expect(err).toMatchObject({ code: "E_NO_REPORT" });
+    expect(printed).toEqual([]);
+  });
+});

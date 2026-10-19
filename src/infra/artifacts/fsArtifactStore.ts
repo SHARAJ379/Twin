@@ -81,6 +81,15 @@ function makeRunId(now: Date): string {
   return `${stamp}-${randomUUID().slice(0, 8)}`;
 }
 
+/**
+ * One directory name under `.twin/runs`, and nothing that could leave it: no
+ * separator, no `..`. An id comes from `--run` or from `.twin/latest`, which
+ * is a file in the project like any other.
+ */
+function isRunId(id: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes("..");
+}
+
 /** FS-backed ArtifactStore rooted at `<projectDir>/.twin` (invariant I2). */
 export class FsArtifactStore implements ArtifactStore {
   private readonly root: string;
@@ -108,14 +117,22 @@ export class FsArtifactStore implements ArtifactStore {
   }
 
   async readLatestRunId(): Promise<string | undefined> {
+    let id: string;
     try {
-      return (await readFile(path.join(this.root, "latest"), "utf8")).trim();
+      id = (await readFile(path.join(this.root, "latest"), "utf8")).trim();
     } catch {
       return undefined;
     }
+    return isRunId(id) ? id : undefined;
   }
 
   getRun(id: string): RunHandle {
+    if (!isRunId(id)) {
+      throw new TwinError("E_NO_REPORT", `"${id}" is not a Twin run id`, {
+        hint: "Run ids are the directory names under .twin/runs. Omit --run to use the latest one.",
+        exitCode: 2
+      });
+    }
     return { id, dir: path.join(this.root, "runs", id) };
   }
 

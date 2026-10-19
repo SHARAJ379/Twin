@@ -29,6 +29,9 @@ shift between minor versions.
   wherever Twin prints or saves them: the `setup: running` line, boot, build and setup
   errors, and the run's `pids.json`. A secret from the env written into one of those
   commands was printed as-is, which CI keeps in its log.
+- `twin report --run <id>`, and the run `.twin/latest` names, must now be a run id: a
+  directory name under `.twin/runs`. A path such as `../../somewhere` read a report from
+  outside it. The GitHub Action's `report-dir` output applies the same rule.
 
 ### Changed
 

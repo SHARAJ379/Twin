@@ -269,3 +269,58 @@ describe("HttpScenarioClient outgoing headers", () => {
     expect(seen[0]?.split(",")).toHaveLength(1);
   });
 });
+
+describe("HttpScenarioClient keeps every request on the app", () => {
+  let elsewhere: http.Server | undefined;
+
+  afterEach(async () => {
+    const running = elsewhere;
+    elsewhere = undefined;
+    if (running !== undefined) {
+      running.closeAllConnections();
+      await new Promise<void>((resolve) => running.close(() => resolve()));
+    }
+  });
+
+  // A path comes from the scenario or from a value an earlier response
+  // handed back (`save:`), and `new URL(path, base)` drops the base for an
+  // absolute or scheme-relative one - the request, with the jar's cookies and
+  // the scenario's headers, then went to whatever host that named.
+  it.each([
+    ["an absolute URL", (port: number) => `http://127.0.0.1:${port}/steal`],
+    ["a scheme-relative path", (port: number) => `//127.0.0.1:${port}/steal`]
+  ])("refuses a path that is really %s to another host", async (_label, pathFor) => {
+    const stolen: (string | undefined)[] = [];
+    const other = http.createServer((req, res) => {
+      stolen.push(req.headers.cookie);
+      res.end();
+    });
+    elsewhere = other;
+    await new Promise<void>((resolve) => other.listen(0, "127.0.0.1", () => resolve()));
+    const otherPort = (other.address() as AddressInfo).port;
+
+    const url = await listen((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json", "set-cookie": "sid=s3ssion; Path=/" });
+      res.end(JSON.stringify({ next: pathFor(otherPort) }));
+    });
+
+    const scenario: Scenario = {
+      name: "s",
+      version: 1,
+      steps: [
+        { kind: "request", id: "login", request: { method: "GET", path: "/login" }, save: { next: "$.next" } },
+        { kind: "request", id: "follow", request: { method: "GET", path: "{{next}}", headers: { Authorization: "Bearer t0ken" } } }
+      ]
+    };
+    const results = await new HttpScenarioClient().run(scenario, {
+      proxyUrl: url,
+      instanceDriver: driver,
+      instances: [],
+      requestTimeoutMs: 5000
+    });
+
+    expect(stolen).toEqual([]);
+    expect(results[1]?.expectationsPassed).toBe(false);
+    expect(results[1]?.error?.message).toContain("must be a path on the app");
+  });
+});

@@ -225,6 +225,12 @@ export class HttpScenarioClient implements ScenarioClient {
     try {
       const rendered = renderTemplateDeep(step.request, variables, helpers) as RequestStep["request"];
       const url = new URL(rendered.path, ctx.proxyUrl);
+      // `new URL` drops the base for an absolute or scheme-relative path, and
+      // a path can come from a response (`save:`): without this, the request
+      // and the jar's cookies went to whatever host the app's answer named.
+      if (url.origin !== new URL(ctx.proxyUrl).origin) {
+        throw new Error(`request path ${JSON.stringify(redactUrl(rendered.path, ctx.redactExtraHeaders))} must be a path on the app, such as "/items", not a URL to another host`);
+      }
 
       // Lowercased on the way in, so every assignment below addresses the same
       // key the scenario's own header does. HTTP header names are

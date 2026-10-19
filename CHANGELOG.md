@@ -13,6 +13,10 @@ shift between minor versions.
   have: a pid of 0, 1, a negative or fractional number, a record with an empty command,
   or Twin's own pid. Such a record in a project's `.twin/` could make `twin clean` signal
   far more than the processes it recorded.
+- A scenario step's `path` must now stay on the app. A path that rendered to an absolute
+  or scheme-relative URL - from the scenario, or from a value a response handed back
+  through `save:` - sent the request, with the session's cookies and the step's
+  headers, to the host it named. The step now fails before anything is sent.
 
 ### Changed
 

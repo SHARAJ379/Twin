@@ -28,12 +28,14 @@ the rest in this audit.
 | 13 | `src/cli/commands/doctor.ts` | `twin doctor` failed (exit 1) without git, which nothing in Twin uses. | `doctor.test.ts` (new) | `9268ece`, `a83f23a` |
 | 14 | `src/report/terminal.ts`, `markdown.ts` | The BLOCKED note said "the session bug **above**" (it can be below) and "rejected **on another instance**" (false for `restart-persistence`, in every broken example's report). | `terminal.test.ts` | `b03eef4`, `2f54b6b` |
 | 15 | `src/cli/commands/init.ts` | The starter `scenario.yaml` pointed users at `docs/scenario.schema.json`, a path that only exists in Twin's own repo. | `init.test.ts` | `5e90ca3` |
+| 16 | `src/infra/build/runBuildCommand.ts`, `src/infra/process/runSetupCommand.ts` | A failing `build`/`setup` command's last lines (its actual error) could be missing from the output Twin shows: the log tail was read on `exit`, before the pipes drained. | `runBuildCommand.test.ts`, `runSetupCommand.test.ts` (`6f400da`) | `8f19cee` |
 
-**Investigated and not a bug:** a suspected race where `setup`/`build` read their log tail
-on `exit` before the pipes drained. My first measurement said "20/20 lost"; that came from
-a broken probe (a heredoc mangled the child's script). Measured properly it never
-reproduced (0 of 165 runs, up to 24 in parallel), so the code is unchanged. The runners
-had no tests, so two coverage tests were added (`6f400da`).
+**How #16 was found:** my first local probe said "20/20 lost", but that came from a broken
+probe (a heredoc mangled the child's script), so I retracted it: measured properly on
+Windows it never happened (0 of 165 runs, up to 24 in parallel), and I left the code
+alone and only added the two tests. On the first push, CI's Linux job failed both tests
+(run 39222250425): the race is real on Linux and doesn't show on Windows. The fix then
+went in, and those tests are its before/after proof.
 
 ## Cleanups and test improvements
 
@@ -410,8 +412,8 @@ Every file in `git ls-files` (260) plus the untracked, non-ignored ones (0), ski
 
 - [x] `src/infra/build/prepareCompileOutput.test.ts`: OK
 - [x] `src/infra/build/prepareCompileOutput.ts`: OK
-- [x] `src/infra/build/runBuildCommand.test.ts`: new coverage (6f400da)
-- [x] `src/infra/build/runBuildCommand.ts`: OK - same as runSetupCommand
+- [x] `src/infra/build/runBuildCommand.test.ts`: new (6f400da); failed on Linux CI before the fix
+- [x] `src/infra/build/runBuildCommand.ts`: log tail read before the pipes drained (8f19cee)
 
 ### src/infra/config/ (2)
 
@@ -447,8 +449,8 @@ Every file in `git ls-files` (260) plus the untracked, non-ignored ones (0), ski
 - [x] `src/infra/process/reapOrphans.test.ts`: OK
 - [x] `src/infra/process/reapOrphans.ts`: OK - trusts .twin/pids.json, verified by command line; documented in SECURITY.md
 - [x] `src/infra/process/reapOrphansFailSafe.test.ts`: OK
-- [x] `src/infra/process/runSetupCommand.test.ts`: new coverage (6f400da)
-- [x] `src/infra/process/runSetupCommand.ts`: OK - suspected exit-before-drain log loss NOT reproducible (0/165 under load); left unchanged
+- [x] `src/infra/process/runSetupCommand.test.ts`: new (6f400da); failed on Linux CI before the fix
+- [x] `src/infra/process/runSetupCommand.ts`: log tail read before the pipes drained; reproduced on Linux CI only (8f19cee)
 
 ### src/infra/proxy/ (3)
 

@@ -25,11 +25,13 @@ export function runDoctorChecks(): DoctorCheck[] {
     detail: `${os.platform()} ${os.arch()}`
   });
 
-  const git = spawnSync("git", ["--version"], { encoding: "utf8" });
+  // Informational, never a failure: nothing Twin runs uses git. It's only
+  // what installing Twin from source (`git clone`) needs.
+  const git = spawnSync("git", ["--version"], { encoding: "utf8", windowsHide: true });
   checks.push({
-    name: "git available",
-    ok: git.status === 0,
-    detail: git.status === 0 ? git.stdout.trim() : "not found (only needed for `twin init` on a fresh repo)"
+    name: "git",
+    ok: true,
+    detail: git.status === 0 ? git.stdout.trim() : "not found - only needed to install Twin from source"
   });
 
   return checks;

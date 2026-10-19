@@ -53,6 +53,9 @@ Found in the pre-release audit:
   instead of reporting "did not match anything".
 - An env value with a stray `%` in a `sqlite:` or `file:` path
   (`sqlite:////tmp/100%real.db`) ended `twin run` with a bare "URI malformed".
+- `twin doctor` failed (exit 1) on a machine without git, saying git was needed for
+  `twin init`. Nothing Twin runs uses git; it's only needed to install Twin from source.
+  The git line is now information, never a failure.
 
 ## [0.1.1] - 2026-10-18
 

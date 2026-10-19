@@ -80,5 +80,9 @@ Everything Twin saves is masked first. Reports and `results.json` keep only a sh
 of headers, with cookie values hidden, and mask passwords, tokens, keys and anything
 shaped like a credential in request and response bodies. Each copy's log (and the part
 of it printed when an app fails to start, which can end up in CI output) has your env's
-secret values, URL passwords and bearer tokens removed. The same masking applies to the
-start, build and setup commands wherever Twin prints or saves them.
+secret values, URL passwords and bearer tokens removed. The same masking applies to
+everything Twin itself prints - every log line, error and the terminal report, from
+every command - and to the start, build and setup commands it saves. It recognises a
+secret by your env's secret values and by its shape (`password=...`, `--token=...`,
+`API_KEY=...`, `user:pass@` in a URL, a bearer token): a bare secret with no name in
+front of it, typed straight into a command, isn't recognisable as one.

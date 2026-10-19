@@ -4,8 +4,10 @@ import { createRequire } from "node:module";
 import { Command, InvalidArgumentError, Option } from "commander";
 
 import { TwinError } from "../domain/errors.js";
+import { createLogRedactor } from "../domain/logRedaction.js";
 import { stackIds } from "../domain/stacks/index.js";
 import { ConsoleLogger } from "../infra/log/consoleLogger.js";
+import { RedactingLogger } from "../infra/log/redactingLogger.js";
 import { cleanOrphans } from "./commands/clean.js";
 import { printDoctorReport, runDoctorChecks } from "./commands/doctor.js";
 import { initCommand } from "./commands/init.js";
@@ -13,7 +15,12 @@ import { reportCommand, type ReportFormat } from "./commands/report.js";
 import { runCommand } from "./commands/run.js";
 import { installShutdownHandlers } from "./shutdown.js";
 
-const logger = new ConsoleLogger();
+// Everything any command logs is masked on the way out, so a password or
+// token written into a command, a config value or an error never reaches the
+// terminal - or the CI log that keeps it. `twin run` adds the env's own
+// secret values on top (see runCommand).
+const redactLine = createLogRedactor();
+const logger = new RedactingLogger(new ConsoleLogger(), redactLine);
 const program = new Command();
 
 // Before any command runs: Ctrl-C must stop the instances it started and
@@ -32,7 +39,7 @@ async function runGuarded(action: () => Promise<number>): Promise<void> {
       const logTail = err.details?.logTail;
       if (Array.isArray(logTail) && logTail.length > 0) {
         console.error(`\n--- last ${logTail.length} line(s) from the app ---`);
-        for (const line of logTail) console.error(String(line));
+        for (const line of logTail) console.error(redactLine(String(line)));
         console.error("---");
       }
       process.exitCode = err.exitCode;

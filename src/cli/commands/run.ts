@@ -37,6 +37,7 @@ import { loadDotEnvFiles } from "../../infra/safety/loadDotEnvFiles.js";
 import { loadSourceFilesForSafetyScan } from "../../infra/safety/loadSourceFiles.js";
 import { detectStack } from "../../infra/stack/detectStack.js";
 import { withProjectVirtualenvs } from "../../infra/stack/virtualenvs.js";
+import { RedactingLogger } from "../../infra/log/redactingLogger.js";
 import { FsWorkspaceManager } from "../../infra/workspace/fsWorkspaceManager.js";
 import type { Logger } from "../../ports/logger.js";
 import { buildEvidenceLedger } from "../../report/evidenceLedger.js";
@@ -90,8 +91,27 @@ function formatScenarioErrors(errors: ScenarioParseError[]): string {
     .join("\n");
 }
 
+/** `err` with the parts the CLI prints - message, hint and the app's log tail - masked. */
+function maskedError(err: TwinError, redact: (line: string) => string): TwinError {
+  const logTail = err.details?.["logTail"];
+  return new TwinError(err.code, redact(err.message), {
+    ...(err.hint !== undefined ? { hint: redact(err.hint) } : {}),
+    ...(err.details !== undefined
+      ? { details: Array.isArray(logTail) ? { ...err.details, logTail: logTail.map((line) => redact(String(line))) } : err.details }
+      : {}),
+    exitCode: err.exitCode,
+    cause: err.cause
+  });
+}
+
 /** `twin run`: PREFLIGHT -> CONTROL -> SPLIT -> EVALUATE -> REPORT, per TWIN_ARCHITECTURE.md §3. Returns the process exit code. */
-export async function runCommand(options: RunOptions, logger: Logger): Promise<number> {
+export async function runCommand(options: RunOptions, baseLogger: Logger): Promise<number> {
+  // Every line this run logs, and every error it throws, is masked: secret
+  // shapes from the start, and the env's actual secret values once the env is
+  // known (below). Masking at each call site missed one - the start command
+  // on the "stack:" line went to CI logs as typed.
+  let redactLogLine = createLogRedactor();
+  let logger: Logger = new RedactingLogger(baseLogger, redactLogLine);
   const store = new FsArtifactStore(options.projectDir);
   const lock = await store.acquireLock();
   /**
@@ -164,6 +184,12 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
       { name: "--env", vars: options.env }
     ];
     const { env: mergedEnv, originOf } = mergeEnvSources(envSources);
+    // Instances inherit this environment, so these are exactly the secrets
+    // their own output could echo - into the log files and into the boot-failure
+    // tail Twin prints to the terminal (and therefore into CI logs) - and the
+    // ones a user is likeliest to paste into a command or config value.
+    redactLogLine = createLogRedactor(collectSecretEnvValues(mergedEnv));
+    logger = new RedactingLogger(baseLogger, redactLogLine);
 
     // Scanned per declared value rather than over mergedEnv: whichever source
     // loses the merge still holds a value the app might be the one to load, so
@@ -263,10 +289,6 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
 
     const run = await store.createRun();
     const workspaceManager = new FsWorkspaceManager(path.join(os.tmpdir(), `twin-${run.id}`));
-    // Instances inherit this environment, so these are exactly the secrets
-    // their own output could echo - into the log files and into the boot-failure
-    // tail Twin prints to the terminal (and therefore into CI logs).
-    const redactLogLine = createLogRedactor(collectSecretEnvValues(mergedEnv));
     const instanceDriver = new ProcessInstanceDriver(
       workspaceManager,
       logger,
@@ -449,10 +471,12 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     await store.writeLatestPointer(run);
     await store.pruneOldRuns(10);
 
-    console.log(renderTerminalReport(findings, verdict, PROFILE));
+    console.log(redactLogLine(renderTerminalReport(findings, verdict, PROFILE)));
     logger.info("report saved", { dir: run.dir });
 
     return computeExitCode(verdict);
+  } catch (err) {
+    throw TwinError.isTwinError(err) ? maskedError(err, redactLogLine) : err;
   } finally {
     unregisterShutdown?.();
     if (teardown !== undefined) {

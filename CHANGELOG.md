@@ -29,6 +29,11 @@ shift between minor versions.
   wherever Twin prints or saves them: the `setup: running` line, boot, build and setup
   errors, and the run's `pids.json`. A secret from the env written into one of those
   commands was printed as-is, which CI keeps in its log.
+- Everything Twin prints is now masked on the way out, not at each place that prints
+  it. The `stack:` line every `twin run` prints still showed the start and build commands
+  as typed, so a `--token=...` or `API_KEY=...` in one reached CI logs on every run. The
+  same masking now covers every command's log lines (`run`, `clean`, `init`, `doctor`),
+  the errors and app output printed when a run fails, and the terminal report.
 - `twin report --run <id>`, and the run `.twin/latest` names, must now be a run id: a
   directory name under `.twin/runs`. A path such as `../../somewhere` read a report from
   outside it. The GitHub Action's `report-dir` output applies the same rule.

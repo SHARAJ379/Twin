@@ -2,7 +2,7 @@
 // fs-loaded .json file) so domain/ stays zero-I/O (I6); docs/scenario.schema.json
 // is the published copy for editor/tooling use, kept identical by a test.
 export const scenarioSchema = {
-  $id: "https://github.com/SHARAJ379/Twin/schemas/scenario.schema.json",
+  $id: "https://raw.githubusercontent.com/SHARAJ379/Twin/master/docs/scenario.schema.json",
   title: "Twin scenario",
   type: "object",
   required: ["version", "name", "steps"],

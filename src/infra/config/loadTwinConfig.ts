@@ -6,6 +6,9 @@ import { validateTwinConfig, type TwinConfig } from "../../domain/twinConfig.js"
 
 export const TWIN_CONFIG_FILENAME = "twin.config.json";
 
+/** U+FEFF, as the first character of a file saved as "UTF-8 with BOM". */
+const BYTE_ORDER_MARK = 0xfeff;
+
 /** Reads `<projectDir>/twin.config.json`. Returns undefined if it doesn't exist; throws E_CONFIG_INVALID if it's malformed. */
 export async function loadTwinConfig(projectDir: string): Promise<TwinConfig | undefined> {
   const configPath = path.join(projectDir, TWIN_CONFIG_FILENAME);
@@ -19,7 +22,9 @@ export async function loadTwinConfig(projectDir: string): Promise<TwinConfig | u
 
   let data: unknown;
   try {
-    data = JSON.parse(raw);
+    // A byte order mark is how Windows PowerShell 5.1's Out-File and older
+    // Notepad save UTF-8, and JSON.parse rejects it as an unexpected token.
+    data = JSON.parse(raw.charCodeAt(0) === BYTE_ORDER_MARK ? raw.slice(1) : raw);
   } catch (err) {
     throw new TwinError("E_CONFIG_INVALID", `${TWIN_CONFIG_FILENAME} is not valid JSON`, {
       hint: `Fix or delete ${configPath}.`,

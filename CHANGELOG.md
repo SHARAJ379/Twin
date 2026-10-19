@@ -39,6 +39,8 @@ Found in the pre-release audit:
   `{"data": {"login": "<JWT>"}}`, a new API key returned as `{"result": "sk_live_..."}` -
   was written whole into `results.json`. JWT-shaped values and known key prefixes
   (`sk_live_`, `ghp_`, `AKIA`, ...) are now masked wherever they appear in a body.
+- A `twin.config.json` saved as "UTF-8 with BOM" - what Windows PowerShell 5.1's
+  `Out-File` and older Notepad write - was rejected as "not valid JSON".
 
 ## [0.1.1] - 2026-10-18
 

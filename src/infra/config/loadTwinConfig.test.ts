@@ -26,6 +26,16 @@ describe("loadTwinConfig", () => {
     await expect(loadTwinConfig(projectDir)).resolves.toEqual({ scenario: "scenario.yaml", start: "npm start" });
   });
 
+  // Found in the pre-release audit: Windows PowerShell 5.1's Out-File and
+  // older Notepad save UTF-8 with a byte order mark, which JSON.parse
+  // rejects - so a valid config was reported as "not valid JSON".
+  it("parses a config saved with a UTF-8 byte order mark", async () => {
+    projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-config-"));
+    await writeFile(path.join(projectDir, "twin.config.json"), String.fromCharCode(0xfeff) + JSON.stringify({ scenario: "scenario.yaml" }), "utf8");
+
+    await expect(loadTwinConfig(projectDir)).resolves.toEqual({ scenario: "scenario.yaml" });
+  });
+
   it("throws E_CONFIG_INVALID for malformed JSON", async () => {
     projectDir = await mkdtemp(path.join(os.tmpdir(), "twin-config-"));
     await writeFile(path.join(projectDir, "twin.config.json"), "{ not json", "utf8");

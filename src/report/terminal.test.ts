@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { Finding } from "../domain/check.js";
 import { computeVerdict } from "../domain/verdict.js";
+import { renderMarkdownReport } from "./markdown.js";
 import { renderTerminalReport } from "./terminal.js";
 
 const passFinding: Finding = {
@@ -72,6 +73,19 @@ describe("renderTerminalReport", () => {
     );
     expect(out.match(/Fix prompt/g)).toHaveLength(1);
     expect(out).toContain("BLOCKED data-consistency");
+  });
+
+  // Found in the pre-release audit: the note said "the session bug above",
+  // but a check earlier in the scenario than /me - or an instance-divergence
+  // finding, which always leads - is printed *before* the session failure.
+  it("doesn't say the session bug is 'above' a blocked check printed before it", () => {
+    const session: Finding = { ...failFinding, checkId: "session-survives-switch", title: "Session survives instance switch" };
+    const blocked: Finding = { ...failFinding, blockedBy: "auth" };
+    const findings = [blocked, session];
+    const out = renderTerminalReport(findings, computeVerdict(findings), "ephemeral");
+    expect(out).not.toContain("above");
+    expect(out).toContain("the session bug in this report is the cause");
+    expect(renderMarkdownReport("s", findings, computeVerdict(findings), "ephemeral")).not.toContain("above");
   });
 
   it("still gives one fix prompt when every failure is blocked - the 401 is the bug", () => {

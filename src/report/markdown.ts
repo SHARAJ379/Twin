@@ -28,7 +28,7 @@ export function renderMarkdownReport(
     if (blocked && !prompt) {
       lines.push(
         finding.blockedBy === "auth"
-          ? "_Blocked: rejected (401/403) on another instance, so this check never reached what it tests. The session bug above is the cause, not a separate one._"
+          ? "_Blocked: rejected (401/403) on another instance, so this check never reached what it tests. The session bug in this report is the cause, not a separate one._"
           : `_Blocked: ${"reason" in finding ? finding.reason : ""}._`,
         ""
       );

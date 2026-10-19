@@ -56,6 +56,8 @@ Found in the pre-release audit:
 - `twin doctor` failed (exit 1) on a machine without git, saying git was needed for
   `twin init`. Nothing Twin runs uses git; it's only needed to install Twin from source.
   The git line is now information, never a failure.
+- A BLOCKED check's note pointed at "the session bug above" even when the session
+  failure was printed below it. It now says "the session bug in this report".
 
 ## [0.1.1] - 2026-10-18
 

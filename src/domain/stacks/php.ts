@@ -117,7 +117,11 @@ export const phpStack: StackProfile = {
   markers: ["composer.json", "artisan", "index.php"],
   reads: ["composer.json"],
   linkDirs: ["vendor"],
-  ignoreDirs: ["vendor", "storage", "node_modules"],
+  // Not `storage`: Laravel won't boot without storage/framework/{views,cache,
+  // sessions}, and a copy per instance is what two servers really have. Its
+  // session files changing there is also the tracer's best evidence for a
+  // `file` session driver.
+  ignoreDirs: ["vendor", "node_modules"],
   sourceExtensions: [".php", ".env"],
   rules: [
     localDriverRule,

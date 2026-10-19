@@ -228,8 +228,8 @@ export class FsWorkspaceManager implements WorkspaceManager {
           return false;
         }
         // The stack's ignore list is top-level only, as WorkspaceOptions says:
-        // it names build output (`dist`, `build`, `bin`, `tmp`, `log`,
-        // `storage`) at the root of a project. Matched at any depth, it took
+        // it names build output (`dist`, `build`, `bin`, `tmp`, `log`) at the
+        // root of a project. Matched at any depth, it took
         // real source directories with it - `src/build/`, `lib/dist/` - which
         // left the app unable to boot on a missing module, reported as a
         // workspace that simply didn't work. DEFAULT_IGNORE stays depth-wide:

@@ -41,6 +41,10 @@ Found in the pre-release audit:
   (`sk_live_`, `ghp_`, `AKIA`, ...) are now masked wherever they appear in a body.
 - A `twin.config.json` saved as "UTF-8 with BOM" - what Windows PowerShell 5.1's
   `Out-File` and older Notepad write - was rejected as "not valid JSON".
+- A Laravel app never booted under Twin: the PHP stack left `storage/` out of every
+  instance's workspace, and Laravel won't start without `storage/framework/views`. It
+  reported `E_BOOT_TIMEOUT`, with a hint about the health path. `storage/` is now copied
+  like the rest of the project, one copy per instance, as on two real servers.
 
 ## [0.1.1] - 2026-10-18
 

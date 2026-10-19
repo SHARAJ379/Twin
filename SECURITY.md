@@ -42,3 +42,35 @@ Twin is a local developer tool, not a sandboxed execution environment. Running `
 
 If you're running `twin run` in CI, treat it the same as any other step that executes your
 application code: it has the same access to secrets/environment as the job it runs in.
+
+## What counts as local
+
+Twin refuses to run when your app is configured to use a datastore it doesn't consider
+local. It looks at every `.env*` file in the project (except templates like
+`.env.example`), your shell's environment, `twin.config.json`'s `env`, `--env`, and
+connection strings written into your code. The refusal names the host and where it was
+set.
+
+Where the line falls is deliberate, and worth knowing if your network has short internal
+hostnames:
+
+- A dotted name or an IP address is **remote**, unless it's loopback (`localhost`,
+  `127.0.0.1`, `::1`), `host.docker.internal`, `*.localhost`, an mDNS `*.local`, or a
+  reserved test name (`example.com`, `*.test`, `*.example`, `*.invalid`).
+- A **short, dotless name** (`db`, `redis`, `analytics`) counts as **local**, because
+  that's what it is in every docker-compose project. That includes a Kubernetes service
+  or Tailscale short name, which Twin can't tell apart from a container.
+- A short name that says it's a shared environment (`prod-db`, `staging-db`,
+  `stg-postgres`, `uat_db`, `primary`, `live-redis`) is still **remote**, and so is any
+  `*.svc.cluster.local` address.
+
+If your dev environment points a short name at a real shared database, Twin won't catch
+it, so use a local one.
+
+## What Twin writes down
+
+Everything Twin saves is masked first. Reports and `results.json` keep only a short list
+of headers, with cookie values hidden, and mask passwords, tokens, keys and anything
+shaped like a credential in request and response bodies. Each copy's log (and the part
+of it printed when an app fails to start, which can end up in CI output) has your env's
+secret values, URL passwords and bearer tokens removed.

@@ -7,6 +7,17 @@ shift between minor versions.
 
 ## [Unreleased]
 
+### Changed
+
+- README rewritten for someone new to Twin: what it is in two sentences, install, a
+  one-minute try on a bundled example with its real output, step-by-step use on your own
+  app, what each result label and exit code means, and the common problems. The full
+  reference moved into `docs/`: [scenarios](docs/scenarios.md),
+  [configuration and commands](docs/configuration.md), [CI](docs/ci.md),
+  [how it works](docs/how-it-works.md) and [troubleshooting](docs/troubleshooting.md).
+  The scenario guide also documents what was undocumented before: templates work in
+  `request` only, the `restart` step's `disk` and `mode`, and editor autocomplete.
+
 ### Fixed
 
 Found by running Twin against a real FastAPI app:

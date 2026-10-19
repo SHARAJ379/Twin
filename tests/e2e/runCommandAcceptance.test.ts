@@ -62,7 +62,7 @@ describe.skipIf(fixtureDepsMissing(brokenExpressDir, fixedExpressDir))(
     ).finally(() => log.mockRestore());
     expect(exitCode).toBe(1);
 
-    // One session bug, not four (README "Built-in checks"): the three checks
+    // One session bug, not four (docs/scenarios.md, "When the session is the real problem"): the three checks
     // it 401s are shown as blocked, with no fix prompt of their own.
     const terminal = printed.join("\n");
     expect(terminal).toContain(

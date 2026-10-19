@@ -50,9 +50,6 @@ Found in the pre-release audit:
   `{"data": {"login": "<JWT>"}}`, a new API key returned as `{"result": "sk_live_..."}` -
   was written whole into `results.json`. JWT-shaped values and known key prefixes
   (`sk_live_`, `ghp_`, `AKIA`, ...) are now masked wherever they appear in a body.
-- When a `build` or `setup` command failed after printing a lot, the output Twin showed
-  could stop short of the command's actual error, its last lines (seen on Linux): Twin
-  read the output as soon as the command exited, before all of it had arrived.
 - A `twin.config.json` saved as "UTF-8 with BOM" - what Windows PowerShell 5.1's
   `Out-File` and older Notepad write - was rejected as "not valid JSON".
 - A Laravel app never booted under Twin: the PHP stack left `storage/` out of every

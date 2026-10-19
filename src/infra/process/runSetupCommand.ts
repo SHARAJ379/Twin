@@ -39,9 +39,9 @@ export async function runSetupCommand(
         })
       );
     });
-    // 'close', not 'exit': 'exit' can fire before the pipes have drained, and
-    // a failing command prints its actual error last. On Linux CI the logTail
-    // came back without it (run 39222250425); Windows happens not to show it.
+    // 'close', not 'exit': Node documents that a child's stdio may still be
+    // open when 'exit' fires, and a failing command prints its actual error
+    // last. 'close' comes once the output has all been read.
     child.once("close", (code, signal) => {
       if (code === 0) {
         resolve();

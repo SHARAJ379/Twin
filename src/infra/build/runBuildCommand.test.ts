@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { TwinError } from "../../domain/errors.js";
 import { runBuildCommand } from "./runBuildCommand.js";
 
-/** Prints a lot first, then the line that says what went wrong, then fails. */
-const LOUD_FAILURE = `node -e "process.stderr.write('x'.repeat(400000) + '\\n'); console.error('src/app.ts(3,1): error TS2304'); process.exit(2)"`;
+/** Prints a lot first, then the line that says what went wrong, then fails (see runSetupCommand.test.ts for why exitCode). */
+const LOUD_FAILURE = `node -e "process.stderr.write('x'.repeat(400000) + '\\n'); console.error('src/app.ts(3,1): error TS2304'); process.exitCode = 2"`;
 
 describe("runBuildCommand", () => {
   it("resolves when the build exits 0", async () => {
@@ -12,8 +12,7 @@ describe("runBuildCommand", () => {
   });
 
   // The logTail is the whole diagnosis Twin prints for a failed build, and a
-  // compiler prints its error last. Read on 'exit', the tail came back
-  // without it on Linux CI (run 39222250425); it never did on Windows.
+  // compiler prints its error last - after any amount of other output.
   it("keeps the build's last line in the logTail, however much it printed first", async () => {
     const err = await runBuildCommand(LOUD_FAILURE, { cwd: process.cwd(), target: "instance A" }).catch((e: unknown) => e);
 

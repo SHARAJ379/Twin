@@ -28,14 +28,19 @@ the rest in this audit.
 | 13 | `src/cli/commands/doctor.ts` | `twin doctor` failed (exit 1) without git, which nothing in Twin uses. | `doctor.test.ts` (new) | `9268ece`, `a83f23a` |
 | 14 | `src/report/terminal.ts`, `markdown.ts` | The BLOCKED note said "the session bug **above**" (it can be below) and "rejected **on another instance**" (false for `restart-persistence`, in every broken example's report). | `terminal.test.ts` | `b03eef4`, `2f54b6b` |
 | 15 | `src/cli/commands/init.ts` | The starter `scenario.yaml` pointed users at `docs/scenario.schema.json`, a path that only exists in Twin's own repo. | `init.test.ts` | `5e90ca3` |
-| 16 | `src/infra/build/runBuildCommand.ts`, `src/infra/process/runSetupCommand.ts` | A failing `build`/`setup` command's last lines (its actual error) could be missing from the output Twin shows: the log tail was read on `exit`, before the pipes drained. | `runBuildCommand.test.ts`, `runSetupCommand.test.ts` (`6f400da`) | `8f19cee` |
 
-**How #16 was found:** my first local probe said "20/20 lost", but that came from a broken
-probe (a heredoc mangled the child's script), so I retracted it: measured properly on
-Windows it never happened (0 of 165 runs, up to 24 in parallel), and I left the code
-alone and only added the two tests. On the first push, CI's Linux job failed both tests
-(run 39222250425): the race is real on Linux and doesn't show on Windows. The fix then
-went in, and those tests are its before/after proof.
+**Investigated, not a bug: `build`/`setup` log tails.** I suspected these runners lost a
+failing command's last line by reading their log on `exit` before the pipes drained, and
+was wrong about it twice. My first probe ("20/20 lost") was broken: a heredoc mangled the
+child's script. Measured properly on Windows, nothing was lost in 165 runs. Then the two
+coverage tests I'd added (`6f400da`) failed on CI's Linux (run 39222250425) and macOS
+(run 39227569690) jobs, and I took that as proof and changed the code (`8f19cee`). But
+macOS failed the same way *with* that change. The cause was the tests' own fake command:
+it wrote 400 KB to a pipe and called `process.exit()`, which on Linux and macOS throws
+away pipe writes still queued. The child never sent its last line. The fixture now exits
+normally (`process.exitCode`), as real compilers do. Reading on `close` is kept, because
+Node documents that stdio may still be open at `exit`, but no user-visible failure was ever
+shown, so it isn't counted as a bug fix.
 
 ## Cleanups and test improvements
 
@@ -412,8 +417,8 @@ Every file in `git ls-files` (260) plus the untracked, non-ignored ones (0), ski
 
 - [x] `src/infra/build/prepareCompileOutput.test.ts`: OK
 - [x] `src/infra/build/prepareCompileOutput.ts`: OK
-- [x] `src/infra/build/runBuildCommand.test.ts`: new (6f400da); failed on Linux CI before the fix
-- [x] `src/infra/build/runBuildCommand.ts`: log tail read before the pipes drained (8f19cee)
+- [x] `src/infra/build/runBuildCommand.test.ts`: new (6f400da); fixture exited with process.exit(), dropping its own output on Linux/macOS - fixed
+- [x] `src/infra/build/runBuildCommand.ts`: OK - now reads on close, per Node docs (hardening, no bug shown)
 
 ### src/infra/config/ (2)
 
@@ -449,8 +454,8 @@ Every file in `git ls-files` (260) plus the untracked, non-ignored ones (0), ski
 - [x] `src/infra/process/reapOrphans.test.ts`: OK
 - [x] `src/infra/process/reapOrphans.ts`: OK - trusts .twin/pids.json, verified by command line; documented in SECURITY.md
 - [x] `src/infra/process/reapOrphansFailSafe.test.ts`: OK
-- [x] `src/infra/process/runSetupCommand.test.ts`: new (6f400da); failed on Linux CI before the fix
-- [x] `src/infra/process/runSetupCommand.ts`: log tail read before the pipes drained; reproduced on Linux CI only (8f19cee)
+- [x] `src/infra/process/runSetupCommand.test.ts`: new (6f400da); same fixture fix as runBuildCommand.test.ts
+- [x] `src/infra/process/runSetupCommand.ts`: OK - now reads on close, per Node docs (hardening, no bug shown)
 
 ### src/infra/proxy/ (3)
 

@@ -231,7 +231,7 @@ function stripPort(hostPort: string): string {
  * A dotless name that says outright it's a shared environment's server:
  * `prod-db`, `staging-db`, `primary`. Every other dotless name - `db`,
  * `analytics`, a Kubernetes service or Tailscale short name - counts as a
- * local container (README "Safety"), because that is what it is in every
+ * local container (README "Security"), because that is what it is in every
  * docker-compose project, and refusing them refused all of those.
  */
 const PRODUCTION_NAME = /(^|[-_])(prod|prd|production|live|primary|staging|stage|stg|uat|preprod)([-_]|\d|$)/i;

@@ -266,7 +266,7 @@ describe("names that can't be a remote production server", () => {
     expect(scanForRemoteResources({ DATABASE_URL: "postgres://app@10.0.4.12:5432/app" }).map((r) => r.host)).toEqual(["10.0.4.12"]);
   });
 
-  // The deliberate policy (README "Safety"): a short name is a local container
+  // The deliberate policy (README "Security"): a short name is a local container
   // unless it names a shared environment outright.
   it.each(["staging-db", "db-staging", "stg-postgres", "prod2-db", "uat_db", "preprod", "primary", "live-redis"])(
     "refuses the dotless shared-environment name %s, bare or in a URL",

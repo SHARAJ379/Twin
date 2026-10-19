@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Check, Finding } from "../domain/check.js";
 import type { Scenario } from "../domain/scenario.js";
 import type { StepResult } from "../domain/stepResult.js";
-import { evaluate, SCENARIO_INTEGRITY_CHECK_ID } from "./evaluate.js";
+import { evaluate, INSTANCE_DIVERGENCE_CHECK_ID, SCENARIO_INTEGRITY_CHECK_ID } from "./evaluate.js";
 
 function stepResult(stepId: string, expectationsPassed: boolean): StepResult {
   return { stepId, startedAt: 0, durationMs: 1, expectationsPassed, failedExpectations: expectationsPassed ? [] : ["x"] };
@@ -117,6 +117,112 @@ describe("evaluate", () => {
       profile: "ephemeral"
     });
     expect(findings.every((f) => f.checkId !== SCENARIO_INTEGRITY_CHECK_ID)).toBe(true);
+  });
+
+  // Regression (found dogfooding a FastAPI app): a logout on B that A never
+  // heard about failed only in SPLIT, and was reported as "fix the scenario".
+  describe("an untagged step that passed on one instance but failed across two", () => {
+    const flow: Scenario = {
+      version: 1,
+      name: "logout",
+      steps: [
+        { kind: "request", id: "login", request: { method: "POST", path: "/login" } },
+        { kind: "request", id: "logout", request: { method: "POST", path: "/logout" } },
+        { kind: "request", id: "token-rejected", request: { method: "GET", path: "/me" } },
+        { kind: "request", id: "after", request: { method: "GET", path: "/me" } }
+      ]
+    };
+    function answered(stepId: string, status: number, passed: boolean): StepResult {
+      return {
+        ...stepResult(stepId, passed),
+        instanceServed: "A",
+        response: { status, headers: {} },
+        failedExpectations: passed ? [] : [`expected status 401, got ${status}`]
+      };
+    }
+    const allPassed = flow.steps.map((step) => stepResult(step.id, true));
+
+    it("is reported as a multi-instance bug, not a broken scenario", () => {
+      const findings = evaluate({
+        scenario: flow,
+        controlResults: allPassed,
+        splitResults: [stepResult("login", true), stepResult("logout", true), answered("token-rejected", 200, false), stepResult("after", true)],
+        workspaceDiffs: [],
+        checks: new Map(),
+        profile: "ephemeral"
+      });
+
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ checkId: INSTANCE_DIVERGENCE_CHECK_ID, status: "fail" });
+      expect(findings[0]!.blockedBy).toBeUndefined();
+      expect(findings[0]!.summary).toContain('step "token-rejected" passed on a single instance but failed across two');
+      expect(findings[0]!.summary).toContain("served by instance A");
+      expect(findings[0]!.evidence).toContainEqual({ run: "control", stepId: "token-rejected", note: "passed on a single instance" });
+    });
+
+    it("reports one bug for the first step to diverge, with the later failures as its consequences", () => {
+      const findings = evaluate({
+        scenario: flow,
+        controlResults: allPassed,
+        splitResults: [
+          stepResult("login", true),
+          stepResult("logout", true),
+          answered("token-rejected", 200, false),
+          answered("after", 500, false)
+        ],
+        workspaceDiffs: [],
+        checks: new Map(),
+        profile: "ephemeral"
+      });
+
+      expect(findings).toHaveLength(1);
+      expect(findings[0]!.summary).toContain('"token-rejected"');
+      expect(findings[0]!.summary).toContain("after then failed too");
+    });
+
+    it("attributes a 401/403 to the session rather than to the step's own subject", () => {
+      const findings = evaluate({
+        scenario: flow,
+        controlResults: allPassed,
+        splitResults: [stepResult("login", true), answered("logout", 401, false)],
+        workspaceDiffs: [],
+        checks: new Map(),
+        profile: "ephemeral"
+      });
+
+      expect(findings[0]).toMatchObject({ checkId: INSTANCE_DIVERGENCE_CHECK_ID, status: "fail", blockedBy: "auth" });
+    });
+
+    it("stays a scenario error when the control run failed an untagged step too", () => {
+      const findings = evaluate({
+        scenario: flow,
+        controlResults: [stepResult("login", false), ...allPassed.slice(1)],
+        splitResults: [stepResult("login", true), stepResult("logout", true), answered("token-rejected", 200, false)],
+        workspaceDiffs: [],
+        checks: new Map(),
+        profile: "ephemeral"
+      });
+
+      expect(findings[0]).toMatchObject({ checkId: SCENARIO_INTEGRITY_CHECK_ID, status: "error" });
+    });
+
+    it("stays a scenario error when the first failure got no answer (a timeout is not a bug)", () => {
+      const findings = evaluate({
+        scenario: flow,
+        controlResults: allPassed,
+        splitResults: [
+          stepResult("login", true),
+          { ...stepResult("logout", false), error: { message: "timed out after 30000ms" } },
+          answered("token-rejected", 200, false)
+        ],
+        workspaceDiffs: [],
+        checks: new Map(),
+        profile: "ephemeral"
+      });
+
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toMatchObject({ checkId: SCENARIO_INTEGRITY_CHECK_ID, status: "error" });
+    });
   });
 
   it("leaves a failing TAGGED step to its own check rather than double-reporting it", () => {

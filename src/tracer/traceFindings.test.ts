@@ -69,6 +69,16 @@ describe("traceFindings", () => {
     expect(result[0]!.suspects).toEqual([]);
   });
 
+  // An untagged step that diverged (evaluate.ts) is a fail like any check's,
+  // and gets suspects the same way - not the empty list an unknown id gets.
+  it("attaches suspects to an instance-divergence failure", async () => {
+    await writeFile(path.join(projectDir, "server.js"), "const items = [];\n");
+
+    const result = await traceFindings([finding("instance-divergence", "fail")], projectDir, [], nodeStack);
+
+    expect(result[0]!.suspects[0]).toMatchObject({ kind: "module-state" });
+  });
+
   it("attaches a static suspect matching the failing check's relevant kind", async () => {
     await writeFile(path.join(projectDir, "server.js"), "const sessions = {};\n");
     const findings = [finding("data-consistency", "fail")];

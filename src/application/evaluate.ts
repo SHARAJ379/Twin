@@ -1,3 +1,4 @@
+import { isAuthRejection } from "../domain/authRejection.js";
 import type { Check, Finding } from "../domain/check.js";
 import type { DeploymentProfile } from "../domain/deploymentProfile.js";
 import { resolveRelatedSteps, restartedSinceRelated } from "../domain/relatedSteps.js";
@@ -23,6 +24,63 @@ export interface EvaluateInput {
  * silent - and a broken setup step makes every later step meaningless.
  */
 export const SCENARIO_INTEGRITY_CHECK_ID = "scenario-ran-as-written";
+
+/**
+ * Reported when an untagged step passed on a single instance but failed its
+ * own `expect:` across two. That is the control gate (I7) applied to a step
+ * nobody tagged: the scenario is proven to work, so the difference is the
+ * app's multi-instance behavior. It used to be reported as the scenario being
+ * broken ("fix the scenario"), which sent people looking for a bug in their
+ * test when the test had just found one in their app.
+ */
+export const INSTANCE_DIVERGENCE_CHECK_ID = "instance-divergence";
+
+function untaggedStepIds(scenario: Scenario): Set<string> {
+  return new Set(
+    scenario.steps.filter((step) => step.kind === "request" && step.check === undefined).map((step) => step.id)
+  );
+}
+
+/**
+ * The first untagged step that failed only in the split run, when the control
+ * run passed every untagged step and that step got an answer. A step with no
+ * answer (a timeout, a refused connection) stays a scenario error: that says
+ * nothing about what the app did, and a flaky request must never be reported
+ * as a bug. Steps after the first are its consequences, not bugs of their own.
+ */
+function instanceDivergenceFinding(input: EvaluateInput): Finding | undefined {
+  const untagged = untaggedStepIds(input.scenario);
+  if (input.controlResults.some((r) => untagged.has(r.stepId) && !r.expectationsPassed)) return undefined;
+
+  const order = new Map(input.scenario.steps.map((step, index) => [step.id, index] as const));
+  const diverged = input.splitResults
+    .filter((r) => untagged.has(r.stepId) && !r.expectationsPassed)
+    .sort((a, b) => (order.get(a.stepId) ?? 0) - (order.get(b.stepId) ?? 0));
+  const first = diverged[0];
+  if (first?.response === undefined) return undefined;
+
+  const control = input.controlResults.find((r) => r.stepId === first.stepId);
+  if (control === undefined) return undefined;
+
+  const later = diverged.slice(1).map((r) => r.stepId);
+  const where = first.instanceServed !== undefined ? ` (served by instance ${first.instanceServed})` : "";
+  const then = later.length > 0 ? `; ${later.join(", ")} then failed too` : "";
+
+  return {
+    checkId: INSTANCE_DIVERGENCE_CHECK_ID,
+    status: "fail",
+    title: "Same behavior on one instance and two",
+    summary: `step "${first.stepId}" passed on a single instance but failed across two${where} - ${first.failedExpectations.join("; ")}${then}`,
+    evidence: [
+      { run: "control", stepId: control.stepId, note: "passed on a single instance" },
+      { run: "split", stepId: first.stepId, note: first.failedExpectations.join("; ") },
+      ...later.map((stepId) => ({ run: "split" as const, stepId, note: `failed after "${first.stepId}"` }))
+    ],
+    suspects: [],
+    // A 401/403 never reached the step's handler: what diverged is the session.
+    ...(isAuthRejection(first) ? { blockedBy: "auth" as const } : {})
+  };
+}
 
 function scenarioIntegrityFinding(input: EvaluateInput): Finding | undefined {
   const tagged = new Set(
@@ -127,7 +185,7 @@ export function evaluate(input: EvaluateInput): Finding[] {
 
   // First, so it reads as the headline: if the scenario itself didn't run as
   // written, everything below it is suspect.
-  const integrity = scenarioIntegrityFinding(input);
+  const integrity = instanceDivergenceFinding(input) ?? scenarioIntegrityFinding(input);
   if (integrity !== undefined) findings.push(integrity);
   const controlById = new Map(input.controlResults.map((r) => [r.stepId, r] as const));
 

@@ -19,7 +19,10 @@ const RELEVANT_KINDS: Record<string, SuspectKind[]> = {
   // reason records don't cross instances as an in-memory object is.
   "data-consistency": ["module-state", "sqlite-file", "local-fs-write"],
   "file-consistency": ["local-fs-write", "sqlite-file"],
-  "restart-persistence": ["module-state", "sqlite-file", "local-fs-write"]
+  "restart-persistence": ["module-state", "sqlite-file", "local-fs-write"],
+  // An untagged step that diverged could be any of the above; its own
+  // request path still ranks the matching store first (rankSuspects).
+  "instance-divergence": ["module-state", "sqlite-file", "local-fs-write", "memory-session-store"]
 };
 
 /**

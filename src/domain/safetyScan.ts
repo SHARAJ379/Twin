@@ -331,6 +331,29 @@ function hostsIn(value: string, allowBareHost: boolean): string[] {
   return hosts.filter((host) => host.startsWith("[") || looksLikeBareHostname(host));
 }
 
+/**
+ * The host part when a password holds a raw `/`, `?` or `#`:
+ * `postgres://admin:p/ss@db.prod.example-corp.com/app`. Strictly those must be
+ * percent-encoded, but a pasted connection string often isn't, and drivers
+ * that split on the last `@` connect anyway. Read the standard way, the
+ * authority ended at the `/` and the "host" was `admin` - dotless, so taken
+ * for a local container - and a production database passed the scan.
+ *
+ * Only when what precedes the delimiter is `user:` and something that isn't a
+ * port: `localhost:5432/db?user=a@corp.com` (an `@` in a query after a real
+ * port) and `host/db?user=a@corp.com` still read the standard way.
+ */
+function spilledPasswordHost(rest: string, authority: string, authorityEnd: number): string | undefined {
+  if (authorityEnd === -1 || authority.includes("@")) return undefined;
+  const colon = authority.indexOf(":");
+  if (colon === -1 || /^\d*$/.test(authority.slice(colon + 1))) return undefined;
+  const at = rest.lastIndexOf("@");
+  if (at < authorityEnd) return undefined;
+  const afterPassword = rest.slice(at + 1);
+  const hostEnd = afterPassword.search(/[/?#]/);
+  return hostEnd === -1 ? afterPassword : afterPassword.slice(0, hostEnd);
+}
+
 /** Every host named in a value's authority, unfiltered: `localhost` included. */
 function authorityHosts(value: string, allowBareHost: boolean): string[] {
   let rest = value.trim();
@@ -347,6 +370,8 @@ function authorityHosts(value: string, allowBareHost: boolean): string[] {
 
   const authorityEnd = rest.search(/[/?#]/);
   let authority = authorityEnd === -1 ? rest : rest.slice(0, authorityEnd);
+  const passwordSpill = spilledPasswordHost(rest, authority, authorityEnd);
+  if (passwordSpill !== undefined) authority = passwordSpill;
   // lastIndexOf: a password may itself contain an "@", and the authority's
   // final "@" is always the userinfo separator.
   const at = authority.lastIndexOf("@");

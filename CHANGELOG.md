@@ -28,6 +28,13 @@ Found by running Twin against a real FastAPI app:
   tell what kind of project" this is. They now name the subfolders a stack recognises
   (`"backend" looks like a Python project`) and say to run Twin there.
 
+Found in the pre-release audit:
+
+- **Safety:** a connection string whose password holds an unencoded `/`, `?` or `#`
+  (`postgres://admin:p/ss@db.prod.example.com/app`) passed the check for a real
+  database: the host was read as ending at the password's `/`. It is now found and
+  refused like any other remote host.
+
 ## [0.1.1] - 2026-10-18
 
 ### Fixed

@@ -23,6 +23,27 @@ describe("scanForRemoteResources", () => {
     expect(found).toEqual([]);
   });
 
+  // Found in the pre-release audit: the host was read as ending at the first
+  // "/", so the password's "/" made `admin` the host - dotless, so local.
+  it.each([
+    ["a /", "postgres://admin:p/ss@db.prod.example-corp.com:5432/app"],
+    ["a ?", "postgres://admin:p?ss@db.prod.example-corp.com/app"],
+    ["a #", "postgres://admin:p#ss@db.prod.example-corp.com/app"],
+    ["several", "mongodb+srv://app:a/b?c#d@cluster0.abcde.example-corp.com/app?retryWrites=true"]
+  ])("flags a real host whose password holds %s, unencoded", (_label, value) => {
+    const found = scanForRemoteResources({ DATABASE_URL: value });
+    expect(found.map((ref) => ref.host)).toEqual([value.includes("cluster0") ? "cluster0.abcde.example-corp.com" : "db.prod.example-corp.com"]);
+  });
+
+  it("still reads an @ in a query, or after a real port, as part of the query", () => {
+    expect(
+      scanForRemoteResources({
+        DATABASE_URL: "postgres://localhost:5432/app?user=ops@example-corp.com",
+        REDIS_URL: "redis://localhost/0?client=ci@example-corp.com"
+      })
+    ).toEqual([]);
+  });
+
   it("ignores keys that don't look like a connection string", () => {
     const found = scanForRemoteResources({ NODE_ENV: "production", PORT: "3000" });
     expect(found).toEqual([]);

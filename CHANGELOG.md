@@ -58,6 +58,9 @@ Found in the pre-release audit:
   The git line is now information, never a failure.
 - A BLOCKED check's note pointed at "the session bug above" even when the session
   failure was printed below it. It now says "the session bug in this report".
+- The starter `scenario.yaml` from `twin init` sent you to `docs/scenario.schema.json`,
+  a path in Twin's own repository rather than your project. It now links to the
+  scenario guide online.
 
 ## [0.1.1] - 2026-10-18
 

@@ -7,6 +7,12 @@ import { detectStack } from "../../infra/stack/detectStack.js";
 import { TWIN_CONFIG_FILENAME } from "../../infra/config/loadTwinConfig.js";
 import type { Logger } from "../../ports/logger.js";
 
+/**
+ * A link, not a repo path: the starter is written into the user's project,
+ * where Twin's own docs/ folder doesn't exist.
+ */
+export const SCENARIO_GUIDE_URL = "https://github.com/SHARAJ379/Twin/blob/master/docs/scenarios.md";
+
 const SCAFFOLD_SCENARIO = `name: starter
 version: 1
 steps:
@@ -33,7 +39,7 @@ steps:
 #
 # Built-in checks you can tag a step with: session-survives-switch,
 # data-consistency, file-consistency, restart-persistence.
-# Full step/check reference: docs/scenario.schema.json.
+# How to write steps and checks: ${SCENARIO_GUIDE_URL}
 `;
 
 export interface InitOptions {

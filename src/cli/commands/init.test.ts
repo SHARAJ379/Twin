@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { ConsoleLogger } from "../../infra/log/consoleLogger.js";
 import type { Logger } from "../../ports/logger.js";
-import { initCommand } from "./init.js";
+import { initCommand, SCENARIO_GUIDE_URL } from "./init.js";
 
 const logger = new ConsoleLogger({ level: "error" });
 
@@ -25,6 +25,9 @@ describe("initCommand", () => {
 
     const scenario = await readFile(path.join(projectDir, "scenario.yaml"), "utf8");
     expect(scenario).toContain("kind: request");
+    // A link that works from the user's project, not a path into Twin's own repo.
+    expect(scenario).toContain(SCENARIO_GUIDE_URL);
+    expect(scenario).not.toContain("docs/scenario.schema.json");
 
     const config = JSON.parse(await readFile(path.join(projectDir, "twin.config.json"), "utf8")) as { scenario: string; start: string };
     expect(config.scenario).toBe("scenario.yaml");

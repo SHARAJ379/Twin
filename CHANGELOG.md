@@ -34,6 +34,11 @@ Found in the pre-release audit:
   (`postgres://admin:p/ss@db.prod.example.com/app`) passed the check for a real
   database: the host was read as ending at the password's `/`. It is now found and
   refused like any other remote host.
+- **Secrets:** a response or request body masked only fields with a secret-sounding
+  name, so a credential under an ordinary one - a GraphQL login's
+  `{"data": {"login": "<JWT>"}}`, a new API key returned as `{"result": "sk_live_..."}` -
+  was written whole into `results.json`. JWT-shaped values and known key prefixes
+  (`sk_live_`, `ghp_`, `AKIA`, ...) are now masked wherever they appear in a body.
 
 ## [0.1.1] - 2026-10-18
 

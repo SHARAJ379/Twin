@@ -74,6 +74,34 @@ describe("redactBody", () => {
     expect(redactBody("name=A+B&access_token=abc.def&page=2")).toBe("name=A+B&access_token=<redacted>&page=2");
   });
 
+  // Found in the pre-release audit: only secret *names* were masked in a
+  // body, so a credential under an ordinary name was written out whole.
+  it("masks a JWT or a prefixed key under an ordinary field name, and leaves ids readable", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJlLXZhbHVl";
+    expect(
+      JSON.parse(
+        redactBody(
+          JSON.stringify({
+            data: { login: jwt },
+            result: "sk_live_PLACEHOLDER-not-a-real-key",
+            items: ["ghp_PLACEHOLDERnotarealtoken", "plain"],
+            id: "507f1f77bcf86cd799439011",
+            uuid: "3f8b2c5a-1d4e-4f6a-9b8c-7d2e1f0a5b3c",
+            name: "alice"
+          })
+        )!
+      )
+    ).toEqual({
+      data: { login: "<redacted>" },
+      result: "<redacted>",
+      items: ["<redacted>", "plain"],
+      id: "507f1f77bcf86cd799439011",
+      uuid: "3f8b2c5a-1d4e-4f6a-9b8c-7d2e1f0a5b3c",
+      name: "alice"
+    });
+    expect(redactBody(`next=${jwt}&page=2`)).toBe("next=<redacted>&page=2");
+  });
+
   it("masks a form value that itself contains = (an unencoded base64 token)", () => {
     expect(redactBody("refresh_token=ab==&id=7")).toBe("refresh_token=<redacted>&id=7");
   });

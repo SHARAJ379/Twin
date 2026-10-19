@@ -261,7 +261,20 @@ function redactHtml(raw: string, extra: ReadonlySet<string>): string {
   });
 }
 
+/**
+ * Secret-named keys used to be the only thing a body's JSON was masked by, so
+ * a credential under an ordinary name went into results.json whole: a
+ * GraphQL login answering `{"data": {"login": "<JWT>"}}`, an API that returns
+ * a new key as `{"result": "sk_live_..."}`. These shapes say what a value is
+ * wherever it sits. The broader opaque-token rule stays out of bodies: record
+ * ids look like that too, and a body is evidence someone has to read.
+ */
+function announcesCredential(value: string): boolean {
+  return CREDENTIAL_PREFIXES.some((prefix) => value.startsWith(prefix)) || JWT_SHAPED.test(value);
+}
+
 function maskSecretValues(value: unknown, extra: ReadonlySet<string>): unknown {
+  if (typeof value === "string") return announcesCredential(value) ? "<redacted>" : value;
   if (Array.isArray(value)) return value.map((v) => maskSecretValues(v, extra));
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
@@ -301,7 +314,8 @@ function redactFormBody(raw: string, extra: ReadonlySet<string>): string {
       const eqIdx = pair.indexOf("=");
       if (eqIdx === -1) return pair;
       const name = pair.slice(0, eqIdx);
-      return isSecretKey(safeDecode(name), extra) ? `${name}=<redacted>` : pair;
+      const secret = isSecretKey(safeDecode(name), extra) || announcesCredential(safeDecode(pair.slice(eqIdx + 1)));
+      return secret ? `${name}=<redacted>` : pair;
     })
     .join("&");
 }

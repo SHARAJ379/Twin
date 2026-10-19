@@ -5,6 +5,11 @@ on:
     branches: [master]
   pull_request:
 
+# Read-only: nothing here writes to the repository. Without this the jobs
+# got whatever the repository's default token permissions are.
+permissions:
+  contents: read
+
 jobs:
   verify:
     strategy:

@@ -63,7 +63,7 @@ outputs:
     description: "Twin's own exit code: 0 safe, 1 found a bug, 2 Twin couldn't tell (including Twin's own errors)."
     value: ${{ steps.run.outputs.exit-code }}
   report-dir:
-    description: "Path to the run's .twin/runs/<id> artifact directory (report.json, report.md), relative to project-dir."
+    description: "Path to the run's artifact directory (report.json, report.md, results.json): <project-dir>/.twin/runs/<id>, relative to the workflow's working directory - ready for actions/upload-artifact."
     value: ${{ steps.run.outputs.report-dir }}
 
 runs:

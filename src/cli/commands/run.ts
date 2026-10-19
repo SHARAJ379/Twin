@@ -353,7 +353,7 @@ export async function runCommand(options: RunOptions, logger: Logger): Promise<n
     // tell the user their dev database is accumulating test users. Said on
     // every run regardless, it was noise for apps without one - and noise
     // gets skipped, by the people it's for too.
-    const datastores = findDatastoreSettings(envCandidates, sourceFiles);
+    const datastores = findDatastoreSettings(envCandidates, sourceFiles, mergedEnv);
     if (setup === undefined && datastores.length > 0) {
       const named = `${datastores.slice(0, 3).join(", ")}${datastores.length > 3 ? ` and ${datastores.length - 3} more` : ""}`;
       logger.info(

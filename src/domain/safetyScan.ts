@@ -475,14 +475,21 @@ export function scanSourceForRemoteResources(
  * care whether a datastore is somewhere real; whether there is one at all is
  * what decides if "Twin doesn't remove what a run writes" is worth saying.
  * Named as that note names them: the variable, or the file.
+ *
+ * `effective` is what each instance will actually see. A variable whose
+ * effective value lives under `{{shared}}` points at the throwaway directory
+ * Twin creates and removes every run, so nothing it writes is kept - even if
+ * a `.env` the merge overrode declares a real one.
  */
 export function findDatastoreSettings(
   candidates: readonly EnvCandidate[],
-  files: readonly { path: string; content: string }[]
+  files: readonly { path: string; content: string }[],
+  effective: Readonly<Record<string, string>> = {}
 ): string[] {
   const names = new Set<string>();
   for (const { key, value } of candidates) {
     if (value.trim().length === 0) continue;
+    if (effective[key]?.includes("{{shared}}") === true) continue;
     if (isHostShapedKey(key) || SUSPICIOUS_KEY_PATTERN.test(key) || isDatastoreUrl(value)) names.add(key);
   }
   for (const file of files) {

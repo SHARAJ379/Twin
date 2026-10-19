@@ -320,6 +320,22 @@ describe("findDatastoreSettings", () => {
     ).toEqual(["DATABASE_URL", "DB_HOST", "PGHOST", "REDIS_URL"]);
   });
 
+  // Found dogfooding: DATABASE_URL=sqlite:///{{shared}}/twin.db is the throwaway
+  // database Twin itself creates and removes, yet every run warned it was kept.
+  it("names nothing whose effective value is under {{shared}}, even when an overridden source declares a real one", () => {
+    expect(
+      findDatastoreSettings(
+        [
+          { key: "DATABASE_URL", value: "postgres://localhost:5432/dev" },
+          { key: "DATABASE_URL", value: "sqlite:///{{shared}}/twin.db" },
+          { key: "REDIS_URL", value: "redis://localhost:6379" }
+        ],
+        [],
+        { DATABASE_URL: "sqlite:///{{shared}}/twin.db", REDIS_URL: "redis://localhost:6379" }
+      )
+    ).toEqual(["REDIS_URL"]);
+  });
+
   it("names a connection string whatever the variable is called", () => {
     expect(findDatastoreSettings(env({ ATLAS_URI: "mongodb+srv://u:p@cluster0.example.net/app", STORE: "postgresql://localhost/x" }), [])).toEqual([
       "ATLAS_URI",

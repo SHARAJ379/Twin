@@ -1,4 +1,4 @@
-/** The tracer (§7.6, milestone 5) isn't built yet - this type exists now because Finding references it; every check currently reports []. */
+/** What kind of code a suspect is: the tracer (tracer/traceFindings.ts) picks the kinds relevant to each failing check. */
 export type SuspectKind =
   | "module-state"
   | "memory-session-store"

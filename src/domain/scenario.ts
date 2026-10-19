@@ -27,7 +27,11 @@ export interface Expectation {
 export interface RequestStep {
   kind: "request";
   id: string;
-  /** Pin to an instance, or "any" for round-robin. Default "any". */
+  /**
+   * Pin to an instance, or "any" for round-robin. Left out, a `check:` step
+   * crosses to the instance that didn't do the related write, and any other
+   * step stays where its client's session is (relatedSteps.ts).
+   */
   via?: InstanceId | "any";
   /** Which client/cookie jar. Default "default". */
   as?: string;

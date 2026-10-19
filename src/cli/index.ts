@@ -66,8 +66,10 @@ program
   .option("--project <dir>", "project directory to clean", process.cwd())
   .option("--unlock", "also remove the project's lock even if its holder can't be ruled out - only when no Twin run is in progress", false)
   .action(async (opts: { project: string; unlock: boolean }) => {
-    await cleanOrphans(opts.project, logger, undefined, { unlock: opts.unlock });
-    process.exitCode = 0;
+    await runGuarded(async () => {
+      await cleanOrphans(opts.project, logger, undefined, { unlock: opts.unlock });
+      return 0;
+    });
   });
 
 /** Number("abc") is NaN, which would reach AbortSignal.timeout() and fail far from the typo that caused it. */

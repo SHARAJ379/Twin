@@ -32,6 +32,9 @@ shift between minor versions.
 - `twin report --run <id>`, and the run `.twin/latest` names, must now be a run id: a
   directory name under `.twin/runs`. A path such as `../../somewhere` read a report from
   outside it. The GitHub Action's `report-dir` output applies the same rule.
+- The GitHub Action and this repository's workflows pin every action they use to a
+  commit, and check out without keeping the token. The release workflow's npm publishing
+  identity is now held by the publishing job alone.
 
 ### Changed
 

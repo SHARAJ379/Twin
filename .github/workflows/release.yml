@@ -23,17 +23,28 @@ on:
 
 permissions:
   contents: read
-  id-token: write # the OIDC identity npm publishes and signs provenance with
+
+# One release at a time, and never one cancelled halfway through publishing.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   publish:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    # Only this job can mint the OIDC identity npm trusts: verify installs and
+    # runs code from the registry and the examples, and must not hold it.
+    permissions:
+      contents: read
+      id-token: write # the OIDC identity npm publishes and signs provenance with
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Trusted publishing needs npm 11.5.1+ and Node 22.14+, so this job runs
       # Node 24 - CI still runs every push on Node 20, the supported floor.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           registry-url: "https://registry.npmjs.org"
@@ -52,17 +63,18 @@ jobs:
       # CI the fixture tests insist on every toolchain they boot apps with
       # (tests/e2e/helpers/fixtureRequirements.ts), so this is the same setup
       # as ci.yml's verify job. Without it, publishing failed at the tests.
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
       - run: python -m pip install flask
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ">=1.22"
-      - uses: ruby/setup-ruby@v1
+          cache: false # no cache in the publishing job, as for setup-node above
+      - uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
         with:
           ruby-version: "3.3"
-      - uses: shivammathur/setup-php@v2
+      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: "8.3"
 
@@ -105,10 +117,13 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7 # for examples/fixed-express; Twin itself comes from npm
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 - for examples/fixed-express; Twin itself comes from npm
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          package-manager-cache: false # a release workflow restores no cache, as above
 
       - name: Which version
         shell: bash

@@ -40,10 +40,23 @@ export function localPathIn(value: string): string | undefined {
     if (rest.startsWith("//")) rest = rest.slice(2); // the (empty) authority
     // SQLAlchemy's form: `sqlite:///rel.db` is relative, `sqlite:////abs.db` absolute.
     if (url[1]!.toLowerCase().startsWith("sqlite") && rest.startsWith("/")) rest = rest.slice(1);
-    rest = decodeURIComponent(rest).replace(/^\/([A-Za-z]:[\\/])/, "$1");
+    rest = safeDecode(rest).replace(/^\/([A-Za-z]:[\\/])/, "$1");
     return isAbsolute(rest) ? rest : undefined;
   }
   return isAbsolute(trimmed) && !trimmed.includes(" -") ? trimmed : undefined;
+}
+
+/**
+ * Every env value the app is given passes through here, and a stray `%`
+ * (`sqlite:////tmp/100%real.db`) made decodeURIComponent throw - which ended
+ * `twin run` with a bare "URI malformed". Undecodable means "take it as is".
+ */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function isAbsolute(p: string): boolean {

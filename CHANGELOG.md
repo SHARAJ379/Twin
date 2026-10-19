@@ -51,6 +51,8 @@ Found in the pre-release audit:
 - A `save:` or `jsonPath:` path naming a field the response didn't have, but every
   JavaScript object inherits (`$.constructor`, `$.toString`), matched a built-in function
   instead of reporting "did not match anything".
+- An env value with a stray `%` in a `sqlite:` or `file:` path
+  (`sqlite:////tmp/100%real.db`) ended `twin run` with a bare "URI malformed".
 
 ## [0.1.1] - 2026-10-18
 

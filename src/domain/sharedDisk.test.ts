@@ -11,7 +11,10 @@ describe("localPathIn", () => {
     ["C:/data/app.db", "C:/data/app.db"],
     ["sqlite:////home/me/app.sqlite3", "/home/me/app.sqlite3"],
     ["sqlite:///C:/data/app.db", "C:/data/app.db"],
-    ["file:/srv/app.db?mode=rwc", "/srv/app.db"]
+    ["file:/srv/app.db?mode=rwc", "/srv/app.db"],
+    // Found in the pre-release audit: a stray % threw URIError and ended the run.
+    ["sqlite:////tmp/100%real.db", "/tmp/100%real.db"],
+    ["sqlite:////tmp/my%20app.db", "/tmp/my app.db"]
   ])("reads %s as the local path %s", (value, expected) => {
     expect(localPathIn(value)).toBe(expected);
   });

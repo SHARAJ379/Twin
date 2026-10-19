@@ -138,6 +138,15 @@ export class HttpProxy implements Proxy {
     const pin = req.headers[PIN_HEADER];
     const pinned = Array.isArray(pin) ? pin[0] : pin;
 
+    // Origin-form only. An absolute-form target (`GET http://host/ HTTP/1.1`)
+    // asks for a forward proxy, and this one only ever reaches its instances.
+    if (!url.startsWith("/")) {
+      res.writeHead(400, { "X-Twin-Error": "origin-form-only" });
+      res.end();
+      this.emit(method, url, undefined, 400, startedAt);
+      return;
+    }
+
     const target = await this.pickTarget(pinned);
     if (target === undefined) {
       res.writeHead(503, { "X-Twin-Error": pinned !== undefined ? "pinned-instance-not-ready" : "no-ready-instance" });
@@ -147,7 +156,9 @@ export class HttpProxy implements Proxy {
     }
 
     const agent = this.agentFor(target);
-    const upstreamUrl = new URL(url, target.baseUrl);
+    // Appended to the instance's origin, never resolved against it: resolving
+    // `//other-host/x` as a URL reference replaces the host.
+    const upstreamUrl = new URL(`${new URL(target.baseUrl).origin}${url}`);
 
     const proxyReq = http.request(
       upstreamUrl,

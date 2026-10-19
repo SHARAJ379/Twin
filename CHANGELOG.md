@@ -17,6 +17,9 @@ shift between minor versions.
   or scheme-relative URL - from the scenario, or from a value a response handed back
   through `save:` - sent the request, with the session's cookies and the step's
   headers, to the host it named. The step now fails before anything is sent.
+- Twin's local proxy only ever forwards to the app's instances. A request whose target
+  named a host of its own was forwarded to that host; it is now refused with `400`, and
+  a path beginning `//` reaches the instance as a path.
 
 ### Changed
 

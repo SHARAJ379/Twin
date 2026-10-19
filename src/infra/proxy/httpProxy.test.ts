@@ -256,4 +256,47 @@ describe("HttpProxy", () => {
     expect(collected).toHaveLength(1);
     expect(collected[0]).toMatchObject({ method: "GET", path: "/items", status: 200 });
   });
+
+  // `new URL(req.url, base)` drops the base when the request target names a
+  // host, which made the proxy forward to any host a local client asked for.
+  describe("never forwards anywhere but an instance", () => {
+    let elsewhere: Awaited<ReturnType<typeof startFakeUpstream>>;
+
+    beforeEach(async () => {
+      elsewhere = await startFakeUpstream("elsewhere");
+    });
+
+    afterEach(async () => {
+      await new Promise((resolve) => elsewhere.server.close(resolve));
+    });
+
+    function rawRequest(target: string): Promise<{ status: number; body: string }> {
+      const { port } = new URL(proxyUrl);
+      return new Promise((resolve, reject) => {
+        const req = http.request({ host: "127.0.0.1", port, path: target, method: "GET", agent: false }, (res) => {
+          let body = "";
+          res.on("data", (chunk: Buffer) => (body += chunk.toString()));
+          res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+        });
+        req.on("error", reject);
+        req.end();
+      });
+    }
+
+    it("refuses an absolute-form request target", async () => {
+      const res = await rawRequest(`${elsewhere.baseUrl}/steal`);
+
+      expect(res.status).toBe(400);
+      expect(elsewhere.requests).toHaveLength(0);
+    });
+
+    it("sends a path that starts with // to the instance, as a path", async () => {
+      const host = new URL(elsewhere.baseUrl).host;
+      const res = await rawRequest(`//${host}/steal`);
+
+      expect(elsewhere.requests).toHaveLength(0);
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toMatchObject({ url: `//${host}/steal` });
+    });
+  });
 });

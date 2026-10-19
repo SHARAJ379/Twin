@@ -62,7 +62,8 @@ npm ci
 twin run
 ```
 
-Twin starts the app once, then twice, sends the same requests to both, and prints:
+Twin starts the app once, then twice, sends the same requests to both, and prints this
+(shortened here):
 
 ```text
 ✗ FAIL    session-survives-switch
@@ -96,6 +97,8 @@ cd ../fixed-express
 npm ci
 twin run
 ```
+
+This time every check passes (shortened again):
 
 ```text
 ✓ PASS    session-survives-switch
@@ -131,7 +134,8 @@ twin run
 
 The starter `scenario.yaml` only calls `GET /health`, so this run tests nothing yet. It
 ends with `No checks ran` and exit code `2`. That's expected: it proves Twin can start
-your app and talk to it.
+your app and talk to it. (If your app has no `/health` route, that step fails instead,
+with a `scenario-ran-as-written` error. Step 4 replaces it anyway.)
 
 **4. Describe what to test.** Replace `scenario.yaml` with requests that change something
 through one copy and read it back through the other. For an app with a login:

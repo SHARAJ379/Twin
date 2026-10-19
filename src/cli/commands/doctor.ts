@@ -26,12 +26,13 @@ export function runDoctorChecks(): DoctorCheck[] {
   });
 
   // Informational, never a failure: nothing Twin runs uses git. It's only
-  // what installing Twin from source (`git clone`) needs.
+  // what cloning Twin's repository needs - for its examples, or to install
+  // Twin from source.
   const git = spawnSync("git", ["--version"], { encoding: "utf8", windowsHide: true });
   checks.push({
     name: "git",
     ok: true,
-    detail: git.status === 0 ? git.stdout.trim() : "not found - only needed to install Twin from source"
+    detail: git.status === 0 ? git.stdout.trim() : "not found - only needed to download Twin's examples or install Twin from source"
   });
 
   return checks;

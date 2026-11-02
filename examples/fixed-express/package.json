@@ -10,6 +10,6 @@
   "dependencies": {
     "cookie-parser": "^1.4.7",
     "express": "^5.3.0",
-    "multer": "^2.4.0"
+    "multer": "^2.5.0"
   }
 }
